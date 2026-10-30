@@ -5,16 +5,15 @@
 > review. Nothing is claimed beyond the dated tests cited below.
 
 A Skyline plugin for Super Smash Bros. Ultimate 13.0.5 that shows, under the
-hovered fighter's GSP on the online character select, the GSP Elite Smash
-takes and an estimate of the matches to get there:
+hovered fighter's GSP on the Quickplay character select, the GSP Elite Smash
+takes and an estimate of the matches to get there. For a fighter already in
+Elite Smash it shows the losses in a row that would take it out:
 
-```text
-14,727,480
-Elite 14,749,910 · 1 win
-```
+![The GSP box with the label: 5 wins to reach, 3 losses to drop](docs/media/css-label.png)
 
-For a fighter already in Elite Smash it shows the losses in a row that
-would take it out (`Elite 14,749,910 · 7 losses`).
+(Eden, 2026-10-30: an unplayed fighter at 1500 with 2-minute rules; below,
+the same fighter with the threshold lowered to 1400 by the diagnostic
+build.)
 
 Everything comes from the game itself: the threshold is the server's
 setting 1201, its GSP is the game's own converter, and the estimate runs the
@@ -22,7 +21,19 @@ game's own rating update (Glicko-2 × ruleset K) on the fighter's cached
 record with the server's settings. UI only: no rating, network or match
 state changes.
 
-**Status (2026-10-30):** built; host tests pass. Not yet run in Eden.
+**Status (2026-10-30):** host tests pass; checked in Eden (one console, LAN
+Online with the rating runtime):
+
+- the release and diagnostic builds install on 13.0.5 (all guards match,
+  no heap allocation) and label every hovered fighter;
+- the inputs logged per hover match the game: fighter slot, record
+  1500/130/1500, shown GSP 9,068,494, threshold 1642, σ 0.06;
+- the threshold's GSP from the game's converter is 14,749,911;
+- the rules follow Preferred Rules: Time 2:00 gave K 0.9 and 5 wins, Time
+  3:00 gave K 1.0 and 4 wins.
+
+Not checked: Nintendo's live server (Eden replays a captured settings
+reply), languages other than English, a real Switch.
 
 ## Research
 

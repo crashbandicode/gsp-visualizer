@@ -1,7 +1,7 @@
 # The character select label
 
 2026-10-30. Static analysis of the 13.0.5 `main` (memory addresses; file
-offset = address + 0x100). Eden check pending.
+offset = address + 0x100), checked in Eden the same day (below).
 
 ## How the game shows a fighter's GSP there
 
@@ -31,7 +31,7 @@ offset = address + 0x100). Eden check pending.
   `1739120`/`17393f0`, and the threshold's GSP through `17d1480`. Stores the
   label and the pane (`*(*(sp + 8) + 0x10)`, the pane `377a280` will set).
 - **Append** (function hook on `37a2270`): when the pane is the armed one,
-  passes the game's text plus a line break and `Elite 14,749,910 · 3 wins`
+  passes the game's text plus a line break and `Elite 14,749,911 · 5 wins`
   (or `· 7 losses` at or above the threshold), with the same thousands
   separator as the game's number. Any other text passes through unchanged.
 - **Disarm** (inline hook at `1a1c118`, where both paths meet).
@@ -51,10 +51,23 @@ installs nothing. The plugin writes no game state and sends nothing.
 | GSP converter owner | `*(*(*(*(base + 0x5314510)) + 0x68))`; table count at `*(owner + 8) + 0x22e8` |
 | Rules (as the update reads them) | `530a975` rule, `530a978` seconds, `530a97a`, `530a97b` |
 
-## To check in Eden
+## Eden check (2026-10-30)
 
-- The label appears under the hovered fighter's GSP and fits the panel
-  (line break or two spaces; `·` or `-` if the font lacks `·`).
-- The rule fields hold the preferred Quickplay rules on the character
-  select (the diagnostic build logs them with each label).
-- The numbers in the diagnostic log match the record and the shown GSP.
+One Eden instance on LAN Online with the Eden agent's rating runtime, a
+fresh profile (every fighter unplayed), English, Quickplay → Solo.
+
+- The panel is the character select's right-hand box: "GSP" (part 0, the
+  hovered fighter), "No.1 GSP" (part 1) and "Roster GSP" (part 2), as the
+  code above names them. Only part 0 gets the label.
+- Moving the cursor down a column armed the hook once per fighter, with
+  slots 82, 69, 56, 43, 30, 17, 4, the record 1500/130/1500 and the shown
+  GSP 9,068,494 each time; no other caller reached the GSP path.
+- The text became `9,068,494⏎Elite 14,749,911 · 5 wins` (35 units). The
+  line break fits inside the box and the font has `·`; both stay the
+  defaults.
+- With `threshold=1400` in `diag.txt` the label became
+  `Elite 4,565,189 · 3 losses`.
+- Preferred Rules Time 3:00 changed the rule fields to 0/180, K to 1.0 and
+  the label to `4 wins`.
+- The release build (no diagnostics) showed the same label; install line
+  `result=installed hooks=arm,disarm,set_text heap_allocations=0`.

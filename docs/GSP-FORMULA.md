@@ -162,7 +162,9 @@ Settings as captured; T = 16,141,400; 2-minute timed matches (K = 0.9).
 
 With an opponent at 1500 instead of 1518, the e92 rows would be 1435 and
 1500, so the opponent's input really is their own stored A. Elite at C ≥ 1642
-is GSP 14,749,910 with this T.
+is GSP 14,749,911 with this T: the game's own converter returned that in Eden
+(2026-10-30, through the gsp-visualizer plugin), one more than
+`tools/gsp_display.py` gives.
 
 ## Limits
 

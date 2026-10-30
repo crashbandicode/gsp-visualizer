@@ -16,8 +16,9 @@ observed Eden rating (see [GSP-FORMULA.md](GSP-FORMULA.md)).
   `1739120` returns the server's value and falls back to the game's own
   parameter resource only for keys the server did not send.
 - The value is a rating, not a GSP. Nintendo's captured reply (the one Eden
-  replays, `share/eden/lan-online/init/0x6e_7.bin`) has 1201 = 1642,
-  which is GSP 14,749,910 with the captured total of 16,141,400 players.
+  replays, `share/eden/lan-online/init/0x6e_7.bin`) has 1201 = 1642. The
+  game's converter turns it into GSP 14,749,911 with the captured total of
+  16,141,400 players (Eden, 2026-10-30; the Python model gives one less).
 - The GSP shown for the threshold is the game's own converter
   `17d1480(owner, 21, 1201)`, the same call the result screen and character
   select use. The threshold's GSP therefore moves when the server's total or
@@ -74,8 +75,10 @@ against the Python model on 304 generated vectors.
 
 - Settings, the threshold and the GSP table are the server's and can change
   at any time; the plugin reads them live, these examples use the capture.
-- The rule fields at `530a975..530a97b` are the ones the update reads after a
-  match. That they hold the preferred Quickplay rules while the character
-  select is open has not been checked in Eden yet.
+- The rule fields at `530a975..530a97b` (the ones the update reads after a
+  match) hold the Preferred Rules while the character select is open:
+  Time 2:00 read as 0/120 (K 0.9), Time 3:00 as 0/180 (K 1.0) in Eden. The
+  rules of the match itself come from matchmaking and can differ.
 - 1v1 only: free-for-all and team matches use other factors (settings
-  1050..1073).
+  1050..1073), so with Format set to Smash or Team Battle the counts are
+  only indicative.
