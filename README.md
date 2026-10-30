@@ -21,8 +21,11 @@ it out instead:
 *Same fighters with the threshold lowered to 1400 by the diagnostic build,
 since no fighter on the test profile is in Elite Smash.*
 
-- **Threshold:** the server's Elite Smash setting (1201), shown as GSP by the
-  game's own converter.
+- **Threshold:** read live on every hover from the server's Elite Smash
+  setting (1201) and shown as GSP by the game's own converter, so it follows
+  the server as the threshold and the player count rise. Nothing is
+  hard-coded; Eden replays one captured server reply, hence the fixed 1642
+  in the GIFs.
 - **Estimate:** the game's own rating update (Glicko-2 × the ruleset's K),
   run on the fighter's record against opponents at your rating. K follows
   your Preferred Rules (2:00 time: 0.9, 3:00: 1.0).
