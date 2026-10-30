@@ -1,0 +1,35 @@
+[package]
+name = "gsp-visualizer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Skyline plugin for Super Smash Bros. Ultimate 13.0.5 that shows the Elite Smash threshold GSP and an estimate of the matches to reach or lose it on the Quickplay character select"
+license = "MIT"
+
+[package.metadata.skyline]
+titleid = "01006A800016E000"
+
+[features]
+# Eden-only diagnostics (logging the values behind each label); never in the shipped NRO.
+diag = []
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_os = "switch")'.dependencies]
+skyline = "=0.6.0"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+# Size over speed: the mapped NRO is the game-heap cost (as in the other plugins).
+opt-level = "s"
+debug = 2
+strip = false
+lto = true
+codegen-units = 1
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("switch"))'] }

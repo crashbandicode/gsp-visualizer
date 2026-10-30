@@ -1,0 +1,14 @@
+target/
+/dist/
+*.nro
+*.nso
+*.elf
+*.zip
+*.log
+*.dmp
+__pycache__/
+# Eden runner, collected data and local notes
+eden/
+data/
+work/
+HANDOFF.md
