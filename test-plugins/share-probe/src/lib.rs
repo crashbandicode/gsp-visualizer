@@ -118,10 +118,6 @@ static THREAD: Thread = Thread(core::cell::UnsafeCell::new([0; 0x1c0]));
 
 #[skyline::main(name = "share-probe")]
 pub fn main() {
-    if !guard_matches() {
-        append(format_args!("probe result=guard_mismatch"));
-        return;
-    }
     let mut export = 0usize;
     unsafe { nn::ro::LookupSymbol(&mut export, b"ssbu_inline_site_1a1c118_v1\0".as_ptr()) };
     let table = if export == 0 {
@@ -133,6 +129,11 @@ pub fn main() {
     };
     match share::role(table, &SITE_SHARE as *const _ as usize) {
         share::Role::Owner => {
+            // Only the owner guards the site: a guest finds it already hooked.
+            if !guard_matches() {
+                append(format_args!("probe result=guard_mismatch"));
+                return;
+            }
             skyline::install_hooks!(site);
             append(format_args!(
                 "probe result=installed role=owner guests={}",

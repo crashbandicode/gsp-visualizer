@@ -709,15 +709,26 @@ pub fn main() {
         report_install(&mut report);
         return;
     }
+    // Election first (see `share`): when another plugin owns `.1a1c118` its
+    // hook has already changed those bytes, so only the owner guards the
+    // shared site itself; everything else this plugin relies on is guarded
+    // either way.
+    let own_table = &SITE_SHARE as *const share::SiteShareV1 as usize;
+    let role = share::role(site_owner_table(), own_table);
+    let owner = role == share::Role::Owner;
     for site in model::SITES {
-        if !unsafe { guard_matches(site) } {
-            CHECKS.store(2, Ordering::Release);
+        if (owner || site.offset != model::APPLY_OFFSET) && !unsafe { guard_matches(site) } {
+            if owner {
+                CHECKS.store(2, Ordering::Release);
+            }
             let _ = write!(report, " result=guard_mismatch site={}", site.name);
             report_install(&mut report);
             return;
         }
     }
-    CHECKS.store(1, Ordering::Release);
+    if owner {
+        CHECKS.store(1, Ordering::Release);
+    }
     TEXT_BASE.store(
         unsafe { getRegionAddress(Region::Text) as u64 },
         Ordering::Relaxed,
@@ -730,9 +741,8 @@ pub fn main() {
         let _ = write!(report, " diag {loaded:?}");
     }
     // One hook per instruction: install it when this plugin owns `.1a1c118`,
-    // otherwise run the label from the owner's hook (see `share`).
-    let own_table = &SITE_SHARE as *const share::SiteShareV1 as usize;
-    match share::role(site_owner_table(), own_table) {
+    // otherwise run the label from the owner's hook.
+    match role {
         share::Role::Owner => {
             skyline::install_hooks!(apply);
             OWNER.store(true, Ordering::Release);

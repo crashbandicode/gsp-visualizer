@@ -126,3 +126,11 @@ fresh profile (every fighter unplayed), English, Quickplay → Solo.
   and the label read `15,653,112⏎Elite 14,749,911 · 2 losses`. Unplayed
   fighters then default to 1600 (13,398,614, `2 wins`), as the game's
   default for unplayed fighters (halfway to the best fighter) predicts.
+- 0.2.0 with the elite-rematch plugin and `test-plugins/share-probe` (which
+  wants the same instruction) loaded together: gsp-visualizer logged
+  `result=installed role=owner hooks=apply`, the probe
+  `result=registered role=guest … ok=true`; while hovering, the probe's
+  callback ran 8 times from gsp-visualizer's one hook and the label read
+  `Elite 14,749,911 · 2 losses` (Sephiroth) and `· 2 wins`. A first run
+  showed the probe refusing (`guard_mismatch`) because it guarded the site
+  before the election; both plugins now elect first.
