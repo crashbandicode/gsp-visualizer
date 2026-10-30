@@ -4,76 +4,55 @@
 > (Claude, Codex and other coding agents) under the operator's direction and
 > review. Nothing is claimed beyond the dated tests cited below.
 
-A Skyline plugin for Super Smash Bros. Ultimate 13.0.5 that shows, under the
-hovered fighter's GSP on the Quickplay character select, the GSP Elite Smash
-takes and an estimate of the matches to get there. For a fighter already in
-Elite Smash it shows the losses in a row that would take it out:
+A Skyline plugin for Super Smash Bros. Ultimate 13.0.5. On the Quickplay
+character select it adds a line under the hovered fighter's GSP: the GSP
+Elite Smash takes, and how many wins in a row get you there.
 
-![The GSP box with the label: 5 wins to reach, 3 losses to drop](docs/media/css-label.png)
+![Hovering fighters on the Quickplay character select](docs/media/hover.gif)
 
-(Eden, 2026-10-30: an unplayed fighter at 1500 with 2-minute rules; below,
-the same fighter with the threshold lowered to 1400 by the diagnostic
-build.)
+*Eden, 2026-10-30: unplayed fighters (rating 1500), Preferred Rules Time
+3:00, the server's threshold 1642 (GSP 14,749,911).*
 
-Everything comes from the game itself: the threshold is the server's
-setting 1201, its GSP is the game's own converter, and the estimate runs the
-game's own rating update (Glicko-2 × ruleset K) on the fighter's cached
-record with the server's settings. UI only: no rating, network or match
-state changes.
+A fighter already in Elite Smash shows the losses in a row that would take
+it out instead:
 
-**Status (2026-10-30):** host tests pass; checked in Eden (one console, LAN
-Online with the rating runtime):
+![The label for a fighter at or above the threshold](docs/media/in-elite.gif)
 
-- the release and diagnostic builds install on 13.0.5 (all guards match,
-  no heap allocation) and label every hovered fighter;
-- the inputs logged per hover match the game: fighter slot, record
-  1500/130/1500, shown GSP 9,068,494, threshold 1642, σ 0.06;
-- the threshold's GSP from the game's converter is 14,749,911;
-- the rules follow Preferred Rules: Time 2:00 gave K 0.9 and 5 wins, Time
-  3:00 gave K 1.0 and 4 wins.
+*Same fighters with the threshold lowered to 1400 by the diagnostic build,
+since no fighter on the test profile is in Elite Smash.*
 
-Not checked: Nintendo's live server (Eden replays a captured settings
-reply), languages other than English, a real Switch.
-
-## Research
-
-- [docs/GSP-FORMULA.md](docs/GSP-FORMULA.md): how 13.0.5 updates the rating
-  after a win or loss and turns it into the GSP on screen, with every Eden
-  number reproduced.
-- [docs/ELITE-ESTIMATE.md](docs/ELITE-ESTIMATE.md): where the Elite Smash
-  threshold comes from, how the estimates are defined, example counts.
-- [docs/CSS-LABEL.md](docs/CSS-LABEL.md): the character select code path
-  and the plugin's hooks.
+- **Threshold:** the server's Elite Smash setting (1201), shown as GSP by the
+  game's own converter.
+- **Estimate:** the game's own rating update (Glicko-2 × the ruleset's K),
+  run on the fighter's record against opponents at your rating. K follows
+  your Preferred Rules (2:00 time: 0.9, 3:00: 1.0).
+- UI only: no rating, network or match state changes.
 
 ## Install
 
 Copy `libgsp_visualizer.nro` to
-`sd:/atmosphere/contents/01006A800016E000/romfs/skyline/plugins/`. It
-checks the game version and every hook site first; on any other version it
-installs nothing. The install line goes to
-`sd:/ultimate/gsp-visualizer/events.log`.
+`sd:/atmosphere/contents/01006A800016E000/romfs/skyline/plugins/`. On any
+version other than 13.0.5 it installs nothing.
 
 ## Build
 
 ```text
 cargo test
 cargo skyline build --release
-cargo skyline build --release --features diag   # Eden-only diagnostics
 ```
 
-The diagnostic build logs each label's inputs to `events.log` and reads
-`sd:/ultimate/gsp-visualizer/diag.txt` (`joiner=newline|space`,
-`dot=middle|dash`, `threshold=<rating>|native`).
+## Tested
 
-## Tools
+Eden, 2026-10-30, one console on LAN Online with a rating runtime, English:
+both builds install and label every hovered fighter, and the logged inputs
+match the game. Not tested: Nintendo's live server, other languages, a real
+Switch. Details: [docs/CSS-LABEL.md](docs/CSS-LABEL.md).
 
-```text
-python3 tools/gsp_update.py 1500 130 1500 130 win      # new A B C
-python3 tools/gsp_display.py 16141400 1500 1536        # displayed GSP
-python3 tools/gen_vectors.py                           # Rust test vectors
-python3 tools/guard.py <main> 1a1c0ec                  # hook-site guard bytes
-```
+## Research
 
-`peek.py`, `scan_imm.py`, `bl_callers.py`, `settings.py` and `find_u32.py`
-are the small readers used on the flat `main` image, the captured settings
-reply and the save.
+- [docs/GSP-FORMULA.md](docs/GSP-FORMULA.md): how 13.0.5 updates GSP after
+  a win or loss, with every Eden number reproduced.
+- [docs/ELITE-ESTIMATE.md](docs/ELITE-ESTIMATE.md): the threshold's source
+  and the estimate, with example counts.
+- [docs/CSS-LABEL.md](docs/CSS-LABEL.md): the character select hook and the
+  Eden check.

@@ -51,6 +51,19 @@ installs nothing. The plugin writes no game state and sends nothing.
 | GSP converter owner | `*(*(*(*(base + 0x5314510)) + 0x68))`; table count at `*(owner + 8) + 0x22e8` |
 | Rules (as the update reads them) | `530a975` rule, `530a978` seconds, `530a97a`, `530a97b` |
 
+## Diagnostic build and tools
+
+`cargo skyline build --release --features diag` (Eden only) logs each
+label's inputs to `sd:/ultimate/gsp-visualizer/events.log` and reads
+`sd:/ultimate/gsp-visualizer/diag.txt` every 2 s: `joiner=newline|space`,
+`dot=middle|dash`, `threshold=<rating>|native`.
+
+`tools/`: `gsp_update.py` and `gsp_display.py` (float32 models of the
+update and the display), `gen_vectors.py` (the Rust test vectors),
+`guard.py` (hook-site guard bytes), and the readers used on the flat `main`
+image (`peek.py`, `scan_imm.py`, `bl_callers.py`, `settings.py`,
+`find_u32.py`).
+
 ## Eden check (2026-10-30)
 
 One Eden instance on LAN Online with the Eden agent's rating runtime, a
