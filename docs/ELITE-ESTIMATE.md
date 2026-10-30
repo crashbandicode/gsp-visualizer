@@ -2,8 +2,9 @@
 
 2026-10-30. Static analysis of the 13.0.5 `main` (memory addresses; file
 offset = address + 0x100) and the float32 model in
-[tools/gsp_update.py](../tools/gsp_update.py), which reproduces every
-observed Eden rating (see [GSP-FORMULA.md](GSP-FORMULA.md)).
+[gsp-formula/tools/gsp_update.py](gsp-formula/tools/gsp_update.py), which
+reproduces every observed Eden rating (see
+[gsp-formula/GSP-FORMULA.md](gsp-formula/GSP-FORMULA.md)).
 
 ## Where the threshold comes from
 

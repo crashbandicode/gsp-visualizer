@@ -58,11 +58,10 @@ label's inputs to `sd:/ultimate/gsp-visualizer/events.log` and reads
 `sd:/ultimate/gsp-visualizer/diag.txt` every 2 s: `joiner=newline|space`,
 `dot=middle|dash`, `threshold=<rating>|native`.
 
-`tools/`: `gsp_update.py` and `gsp_display.py` (float32 models of the
-update and the display), `gen_vectors.py` (the Rust test vectors),
-`guard.py` (hook-site guard bytes), and the readers used on the flat `main`
-image (`peek.py`, `scan_imm.py`, `bl_callers.py`, `settings.py`,
-`find_u32.py`).
+`tools/`: `gen_vectors.py` (the Rust test vectors, from the float32 model
+in `docs/gsp-formula/tools/gsp_update.py`) and `guard.py` (hook-site guard
+bytes). The models and the readers used on the flat `main` image are in
+[gsp-formula/tools/](gsp-formula/tools/).
 
 ## Eden check (2026-10-30)
 

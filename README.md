@@ -50,8 +50,9 @@ Switch. Details: [docs/CSS-LABEL.md](docs/CSS-LABEL.md).
 
 ## Research
 
-- [docs/GSP-FORMULA.md](docs/GSP-FORMULA.md): how 13.0.5 updates GSP after
-  a win or loss, with every Eden number reproduced.
+- [docs/gsp-formula/](docs/gsp-formula/): how 13.0.5 updates GSP after a
+  win or loss, with every Eden number reproduced, and the models and image
+  readers used.
 - [docs/ELITE-ESTIMATE.md](docs/ELITE-ESTIMATE.md): the threshold's source
   and the estimate, with example counts.
 - [docs/CSS-LABEL.md](docs/CSS-LABEL.md): the character select hook and the

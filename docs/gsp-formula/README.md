@@ -1,8 +1,7 @@
-# ssbu-gsp-formula
+# GSP formula research
 
-> **Disclaimer:** this project was developed with the assistance of AI
-> (Claude, Codex and other coding agents) under the operator's direction and
-> review. Nothing is claimed beyond the dated tests cited below.
+The investigation behind gsp-visualizer (formerly its own repository,
+ssbu-gsp-formula; its history is merged here).
 
 How Super Smash Bros. Ultimate 13.0.5 computes Global Smash Power (GSP) after
 an online win or loss, read from the 13.0.5 executable and checked against
@@ -23,9 +22,11 @@ start every player uploads the record they would have after a loss.
 | 1464/123 beats 1518/130 | 1501/117 | 1501/117 |
 
 Full formula, inputs, code addresses, settings and limits:
-[docs/GSP-FORMULA.md](docs/GSP-FORMULA.md).
+[GSP-FORMULA.md](GSP-FORMULA.md).
 
 ## Tools
+
+Run from this directory:
 
 ```text
 python3 tools/gsp_update.py 1500 130 1500 130 win      # new A B C

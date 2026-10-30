@@ -6,9 +6,9 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "docs" / "gsp-formula" / "tools"))
 
-from tools.gsp_update import update  # noqa: E402
+from gsp_update import update  # noqa: E402
 
 
 BASE_CASES = 38
