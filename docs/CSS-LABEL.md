@@ -83,3 +83,10 @@ fresh profile (every fighter unplayed), English, Quickplay → Solo.
   the label to `4 wins`.
 - The release build (no diagnostics) showed the same label; install line
   `result=installed hooks=arm,disarm,set_text heap_allocations=0`.
+- A real Elite fighter: on a same-PC pair, a Quickplay match (Sephiroth
+  against Pyra/Mythra, canceled 24 s in) left Sephiroth's record (slot 82,
+  1500/130) in Eden's rating server; relaunched with the seed `82:1700`,
+  the game itself showed Quickplay (Elite Smash) with only Sephiroth lit,
+  and the label read `15,653,112⏎Elite 14,749,911 · 2 losses`. Unplayed
+  fighters then default to 1600 (13,398,614, `2 wins`), as the game's
+  default for unplayed fighters (halfway to the best fighter) predicts.

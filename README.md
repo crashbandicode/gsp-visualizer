@@ -16,10 +16,12 @@ Elite Smash takes, and how many wins in a row get you there.
 A fighter already in Elite Smash shows the losses in a row that would take
 it out instead:
 
-![The label for a fighter at or above the threshold](docs/media/in-elite.gif)
+![The label for a fighter in Elite Smash](docs/media/in-elite.gif)
 
-*Same fighters with the threshold lowered to 1400 by the diagnostic build,
-since no fighter on the test profile is in Elite Smash.*
+*Eden, 2026-10-30: Sephiroth at rating 1700 (a real Quickplay match created
+its record, then Eden's rating server was seeded). The game itself switches
+to Elite Smash: gold header, only Sephiroth lit. Pyra/Mythra, not in Elite,
+shows wins.*
 
 - **Threshold:** read live on every hover from the server's Elite Smash
   setting (1201) and shown as GSP by the game's own converter, so it follows
