@@ -1,18 +1,19 @@
-//! Switch half: version and guard checks, the arm/disarm inline hooks on the
-//! character select's world GSP setter and the pane text hook that appends
-//! the label. Hooks run on the game's UI thread and allocate nothing; the
-//! diagnostic build formats events into a static ring that a writer thread
-//! appends to `events.log`.
+//! Switch half: version and guard checks, the one inline hook in the
+//! character select's world GSP setter that re-sets the pane with the label,
+//! and the plugin API v1 exports (`gsp_visualizer_hooked_sites_v1`,
+//! `gsp_visualizer_label_v1`). The hook runs on the game's UI thread and
+//! allocates nothing; the diagnostic build formats events into a static ring
+//! that a writer thread appends to `events.log`.
 
 use crate::glicko::{self, Estimate, Params};
 use crate::label;
-use crate::model::{self, addr, key, Line, Settings, Site};
+use crate::model::{self, addr, key, Kind, Line, Settings, Site, ENTRY_PATCH};
 use core::cell::UnsafeCell;
 use core::fmt::Write as _;
 use skyline::hooks::{getRegionAddress, InlineCtx, Region};
 use skyline::nn;
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 const DATA_DIR: &str = "sd:/ultimate/gsp-visualizer";
 const OPEN_WRITE_APPEND: i32 = 2 | 4;
@@ -55,12 +56,8 @@ unsafe impl<T> Sync for Owned<T> {}
 static TEXT_BASE: AtomicU64 = AtomicU64::new(0);
 /// `Settings::to_bits`; diagnostic builds reload it from `diag.txt`.
 static SETTINGS: AtomicU64 = AtomicU64::new(0);
-/// The pane whose next text gets the label; 0 when disarmed.
-static ARMED_PANE: AtomicU64 = AtomicU64::new(0);
-/// The label for the armed pane: Elite Smash GSP, and the estimate as
-/// `count | 1 << 31` for losses to drop.
-static LABEL_GSP: AtomicU32 = AtomicU32::new(0);
-static LABEL_ESTIMATE: AtomicU32 = AtomicU32::new(0);
+/// Set once the hook is installed; the exported label function needs it.
+static INSTALLED: AtomicBool = AtomicBool::new(false);
 /// The text handed to the game; static, so it outlives the call.
 static COMPOSED: Owned<[u16; TEXT_LEN]> = Owned(UnsafeCell::new([0; TEXT_LEN]));
 
@@ -70,6 +67,10 @@ fn tick() -> u64 {
 
 fn base() -> u64 {
     TEXT_BASE.load(Ordering::Relaxed)
+}
+
+unsafe fn read_u16(address: u64) -> u16 {
+    (address as *const u16).read_unaligned()
 }
 
 unsafe fn read_u32(address: u64) -> u32 {
@@ -185,11 +186,16 @@ unsafe fn compute(fighter: u64, inputs: &mut Inputs) -> Option<(u32, Estimate)> 
     ))
 }
 
-/// Number path of the world GSP setter. Arms the pane text hook when the
-/// setter was called for the hovered fighter (`.1a19c44`).
-#[skyline::hook(offset = model::ARM_OFFSET, inline)]
-unsafe fn arm(ctx: &mut InlineCtx) {
-    ARMED_PANE.store(0, Ordering::Release);
+/// The world GSP setter after its text call (the plugin's only hook). For the
+/// hovered fighter's GSP (called from `.1a19c44`, GSP path) it sets the pane
+/// again through the game's own setter: the text the game just set, then the
+/// label. Every other call passes untouched.
+#[skyline::hook(offset = model::APPLY_OFFSET, inline)]
+unsafe fn apply(ctx: &mut InlineCtx) {
+    let info = ctx.registers[19].x();
+    if !model::shows_number(read_u32(info), read_u32(info + 0xc)) {
+        return;
+    }
     let frame = ctx.registers[29].x();
     let returns_to = read_u64(frame + 8).wrapping_sub(base());
     if returns_to != model::HOVER_RETURN_OFFSET as u64 {
@@ -197,75 +203,79 @@ unsafe fn arm(ctx: &mut InlineCtx) {
         diag::other_caller(returns_to);
         return;
     }
-    // The pane handle object the setter fills at sp (= x29 - 0x20).
+    // The pane handle object the setter filled at sp (= x29 - 0x20).
     let Some(pane) = ptr(frame - 0x20 + 8).and_then(|handle| ptr(handle + 0x10)) else {
         return;
     };
-    let fighter = read_u64(ctx.registers[19].x() - 8);
+    let Some(text) = ptr(pane + model::textbox::STRING as u64) else {
+        return;
+    };
+    let units = usize::from(read_u16(pane + model::textbox::LENGTH as u64)).min(TEXT_LEN - 1);
+    let original = model::until_nul(core::slice::from_raw_parts(text as *const u16, units));
+    let fighter = read_u64(info - 8);
     let mut inputs = Inputs::default();
     let result = compute(fighter, &mut inputs);
     #[cfg(feature = "diag")]
-    diag::armed(fighter, ctx.registers[19].x(), &inputs, result);
+    diag::armed(fighter, info, &inputs, result);
     let Some((gsp, estimate)) = result else {
         return;
     };
-    LABEL_GSP.store(gsp, Ordering::Relaxed);
-    LABEL_ESTIMATE.store(
-        match estimate {
-            Estimate::Reach(n) => n,
-            Estimate::Keep(n) => n | 1 << 31,
-        },
-        Ordering::Relaxed,
-    );
-    ARMED_PANE.store(pane, Ordering::Release);
-}
-
-/// After the setter's text call, on both paths.
-#[skyline::hook(offset = model::DISARM_OFFSET, inline)]
-unsafe fn disarm(_ctx: &mut InlineCtx) {
-    ARMED_PANE.store(0, Ordering::Release);
-}
-
-/// The text of a set-text call: `units` long (or up to its NUL when
-/// negative), cut at a NUL and at `TEXT_LEN - 1`.
-unsafe fn text_at<'a>(text: *const u16, units: i32) -> &'a [u16] {
-    if text.is_null() {
-        return &[];
-    }
-    let max = if units < 0 {
-        TEXT_LEN - 1
-    } else {
-        (units as usize).min(TEXT_LEN - 1)
-    };
-    model::until_nul(core::slice::from_raw_parts(text, max))
-}
-
-/// Every pane text. The armed pane's text gets the label appended.
-#[skyline::hook(offset = model::SET_TEXT_OFFSET)]
-unsafe fn set_text(pane: u64, text: *const u16, units: i32, flags: u32) {
-    if pane == 0 || ARMED_PANE.load(Ordering::Acquire) != pane {
-        return call_original!(pane, text, units, flags);
-    }
-    ARMED_PANE.store(0, Ordering::Release);
-    let estimate = match LABEL_ESTIMATE.load(Ordering::Relaxed) {
-        word if word >> 31 != 0 => Estimate::Keep(word & !(1 << 31)),
-        word => Estimate::Reach(word),
-    };
     let settings = settings();
-    let original = text_at(text, units);
-    // SAFETY: only the UI thread arms, and the pane is set on that thread.
+    // SAFETY: only the game's UI thread runs the setter; the game's text is
+    // copied into `out` before the setter replaces the pane's buffer.
     let out = &mut *COMPOSED.0.get();
     let len = label::compose(
         original,
         settings.joiner(),
         settings.dot(),
-        LABEL_GSP.load(Ordering::Relaxed),
+        gsp,
         estimate,
         out,
     );
     #[cfg(feature = "diag")]
     diag::composed(original, &out[..len]);
-    call_original!(pane, out.as_ptr(), len as i32, flags)
+    let set_text: extern "C" fn(u64, *const u16, i32, u32) = game(model::SET_TEXT_OFFSET);
+    set_text(pane, out.as_ptr(), len as i32, 0);
+}
+
+/// Plugin API v1, found by other plugins with `nn::ro::LookupSymbol`: the
+/// main-image offsets this plugin has hooked (none unless installed), so a
+/// plugin can leave them alone or detect gsp-visualizer. Writes up to
+/// `capacity` offsets to `out` and returns how many it hooked.
+#[no_mangle]
+pub unsafe extern "C" fn gsp_visualizer_hooked_sites_v1(out: *mut usize, capacity: usize) -> usize {
+    if !INSTALLED.load(Ordering::Acquire) {
+        return 0;
+    }
+    if !out.is_null() {
+        for (i, site) in model::HOOKED_SITES.iter().take(capacity).enumerate() {
+            *out.add(i) = *site;
+        }
+    }
+    model::HOOKED_SITES.len()
+}
+
+/// Plugin API v1: the label for a fighter (`Elite <GSP> · <n> wins|losses`,
+/// UTF-16, NUL-terminated) so another plugin can show it without hooking.
+/// Returns the units written before the NUL; 0 when unavailable. Call on the
+/// game's UI thread, like the game's own settings and rating reads.
+#[no_mangle]
+pub unsafe extern "C" fn gsp_visualizer_label_v1(
+    fighter: u64,
+    out: *mut u16,
+    capacity: usize,
+) -> usize {
+    if !INSTALLED.load(Ordering::Acquire) || out.is_null() || capacity == 0 {
+        return 0;
+    }
+    let out = core::slice::from_raw_parts_mut(out, capacity);
+    match compute(fighter, &mut Inputs::default()) {
+        Some((gsp, estimate)) => label::compose(&[], &[], settings().dot(), gsp, estimate, out),
+        None => {
+            out[0] = 0;
+            0
+        }
+    }
 }
 
 type Path = Line<96>;
@@ -341,7 +351,7 @@ fn append_log(bytes: &[u8]) {
 #[cfg(feature = "diag")]
 mod diag {
     use super::*;
-    use std::sync::atomic::fence;
+    use std::sync::atomic::{fence, AtomicU32};
 
     const EVENT_RING: usize = 16;
     const EVENT_LEN: usize = 512;
@@ -425,6 +435,32 @@ mod diag {
                 _ => '?',
             });
         }
+    }
+
+    /// Resolves this plugin's exports the way another plugin would and logs
+    /// what the sites export returns.
+    pub fn check_exports() {
+        let lookup = |name: &[u8]| {
+            let mut address = 0usize;
+            let status = unsafe { nn::ro::LookupSymbol(&mut address, name.as_ptr()) };
+            (status, address)
+        };
+        let (status, sites) = lookup(b"gsp_visualizer_hooked_sites_v1\0");
+        let (_, label) = lookup(b"gsp_visualizer_label_v1\0");
+        let mut out = [0usize; 4];
+        let count = if sites == 0 {
+            0
+        } else {
+            let sites_v1: unsafe extern "C" fn(*mut usize, usize) -> usize =
+                unsafe { core::mem::transmute(sites) };
+            unsafe { sites_v1(out.as_mut_ptr(), out.len()) }
+        };
+        push(format_args!(
+            "diag exports lookup_status={status} hooked_sites_v1={} label_v1={} count={count} first={:#x}",
+            u8::from(sites != 0),
+            u8::from(label != 0),
+            out[0]
+        ));
     }
 
     pub fn composed(original: &[u16], composed: &[u16]) {
@@ -545,13 +581,26 @@ mod diag {
     }
 }
 
-unsafe fn guard_matches(site: &Site) -> bool {
+/// The site's bytes in the running image, if it lies inside `.text`.
+unsafe fn site_bytes(site: &Site) -> Option<&'static [u8]> {
     let base = getRegionAddress(Region::Text) as usize;
     let end = getRegionAddress(Region::Rodata) as usize;
     let address = base + site.offset;
-    address.is_multiple_of(4)
-        && address + site.guard.len() <= end
-        && core::slice::from_raw_parts(address as *const u8, site.guard.len()) == site.guard
+    (address.is_multiple_of(4) && address + site.guard.len() <= end)
+        .then(|| core::slice::from_raw_parts(address as *const u8, site.guard.len()))
+}
+
+/// The bytes the site's kind requires are the vanilla ones.
+unsafe fn guard_matches(site: &Site) -> bool {
+    let range = site.checked();
+    site_bytes(site).is_some_and(|bytes| bytes[range.clone()] == site.guard[range])
+}
+
+/// A called function whose entry another plugin has hooked (calls go
+/// through that hook, so both plugins keep working).
+unsafe fn entry_hooked(site: &Site) -> bool {
+    site.kind == Kind::Called
+        && site_bytes(site).is_some_and(|bytes| bytes[..ENTRY_PATCH] != site.guard[..ENTRY_PATCH])
 }
 
 fn version_is_supported() -> bool {
@@ -610,9 +659,17 @@ pub fn main() {
         SETTINGS.store(loaded.to_bits(), Ordering::Release);
         let _ = write!(report, " diag {loaded:?}");
     }
-    skyline::install_hooks!(arm, disarm, set_text);
-    let _ = write!(report, " result=installed hooks=arm,disarm,set_text");
+    skyline::install_hooks!(apply);
+    INSTALLED.store(true, Ordering::Release);
+    let _ = write!(report, " result=installed hooks=apply");
+    for site in model::SITES {
+        if unsafe { entry_hooked(site) } {
+            let _ = write!(report, " shared={}", site.name);
+        }
+    }
     report_install(&mut report);
+    #[cfg(feature = "diag")]
+    diag::check_exports();
     #[cfg(feature = "diag")]
     if !diag::start_writer() {
         report.clear();

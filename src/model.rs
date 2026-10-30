@@ -4,44 +4,60 @@
 //! On the online character select (panel mode 20), hovering a fighter makes
 //! `.1a19bf8` look the fighter up in the panel's map (`+0x290`, key = the
 //! fighter's Hash40, value at node `+0x28`) and call `.1a1c070(part, info)`.
-//! When `info` holds a GSP, `.1a1c0ec..1a1c100` writes it into the part's
-//! `set_txt_match` pane through `mel_chara_select_world_pw_n`, which ends in
-//! the pane text setter `.37a2270`. The plugin arms on that path, appends
-//! its label to the text the setter receives, and disarms at `.1a1c118`.
+//! When `info` holds a GSP (see [`shows_number`]), the setter writes it into
+//! the part's `set_txt_match` pane through `mel_chara_select_world_pw_n`,
+//! which ends in the pane text setter `.37a2270`. The plugin's only hook is
+//! at `.1a1c118`, after that write: it reads the text the game set and calls
+//! the setter again with the label appended. It hooks nothing that other UI
+//! code shares; another plugin's hook on the setter just runs inside that call.
 
 use crate::label;
 
 pub const SUPPORTED_VERSION: &str = "13.0.5";
 
+/// How a site is checked before anything is installed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kind {
+    /// Hooked or relied on in place: all 64 bytes must be the vanilla ones.
+    /// Another plugin's hook here means this plugin installs nothing.
+    Exact,
+    /// A function the plugin only calls: its first [`ENTRY_PATCH`] bytes may
+    /// carry another plugin's hook (calling through it is fine); the rest
+    /// must be vanilla.
+    Called,
+}
+
+/// Bytes a Skyline hook may rewrite at a function entry (an absolute jump:
+/// `ldr x17, #8; br x17; .quad target`).
+pub const ENTRY_PATCH: usize = 16;
+
 /// A code site and the 64 bytes that must be there (13.0.5 image).
 pub struct Site {
     pub name: &'static str,
     pub offset: usize,
+    pub kind: Kind,
     pub guard: [u8; 64],
 }
 
-/// Number path of the world GSP setter: `ldr w3, [x19, #0x10]`. x19 = the
-/// info (the map node + 0x28, so the fighter key is at x19 - 8), x29 = the
-/// frame (the pane handle object at x29 - 0x20, the return address at
-/// x29 + 8).
-pub const ARM_OFFSET: usize = 0x1a1c0ec;
-pub const ARM: Site = Site {
-    name: "arm",
-    offset: ARM_OFFSET,
-    guard: [
-        0x63, 0x12, 0x40, 0xb9, 0xc1, 0x45, 0x01, 0xb0, 0x21, 0x00, 0x31, 0x91, 0xe0, 0x03, 0x00,
-        0x91, 0xe2, 0x03, 0x00, 0x32, 0x60, 0x78, 0x75, 0x94, 0x05, 0x00, 0x00, 0x14, 0x21, 0x4f,
-        0x01, 0x90, 0x21, 0x18, 0x38, 0x91, 0xe0, 0x03, 0x00, 0x91, 0x03, 0x78, 0x75, 0x94, 0xe0,
-        0x07, 0x40, 0xf9, 0x08, 0xc1, 0x01, 0xb0, 0x08, 0xa1, 0x26, 0x91, 0xe8, 0x7f, 0x00, 0xa9,
-        0x40, 0x00, 0x00, 0xb4,
-    ],
-};
+impl Site {
+    /// The guard bytes the check compares.
+    pub fn checked(&self) -> core::ops::Range<usize> {
+        match self.kind {
+            Kind::Exact => 0..64,
+            Kind::Called => ENTRY_PATCH..64,
+        }
+    }
+}
 
-/// Where both paths of the setter meet again: `ldr x0, [sp, #8]`.
-pub const DISARM_OFFSET: usize = 0x1a1c118;
-pub const DISARM: Site = Site {
-    name: "disarm",
-    offset: DISARM_OFFSET,
+/// The world GSP setter after its text call, where both paths meet: `ldr x0,
+/// [sp, #8]`. x19 = the info (the map node + 0x28, so the fighter key is at
+/// x19 - 8), x29 = the frame (the pane handle object at x29 - 0x20, the
+/// return address at x29 + 8). Nothing jumps into the 16 bytes from here.
+pub const APPLY_OFFSET: usize = 0x1a1c118;
+pub const APPLY: Site = Site {
+    name: "apply",
+    offset: APPLY_OFFSET,
+    kind: Kind::Exact,
     guard: [
         0xe0, 0x07, 0x40, 0xf9, 0x08, 0xc1, 0x01, 0xb0, 0x08, 0xa1, 0x26, 0x91, 0xe8, 0x7f, 0x00,
         0xa9, 0x40, 0x00, 0x00, 0xb4, 0x85, 0x4a, 0x7c, 0x94, 0xfd, 0x7b, 0x42, 0xa9, 0xf4, 0x4f,
@@ -51,16 +67,21 @@ pub const DISARM: Site = Site {
     ],
 };
 
-// Both sites are in the setter `.1a1c070`, the arm site first.
-const _: () = assert!(0x1a1c070 < ARM_OFFSET && ARM_OFFSET + 0x2c == DISARM_OFFSET);
+// The site is inside the setter `.1a1c070` (which returns at `.1a1c13c`).
+const _: () = assert!(0x1a1c070 < APPLY_OFFSET && APPLY_OFFSET + ENTRY_PATCH <= 0x1a1c13c);
 
-/// The hover call `bl .1a1c070`; the return address the arm hook expects is
-/// the next instruction. Checked, never hooked.
+/// The main-image offsets this plugin hooks, as `gsp_visualizer_hooked_sites_v1`
+/// reports them to other plugins.
+pub const HOOKED_SITES: [usize; 1] = [APPLY_OFFSET];
+
+/// The hover call `bl .1a1c070`; the return address the hook expects is the
+/// next instruction. Checked, never hooked.
 pub const HOVER_CALL_OFFSET: usize = 0x1a19c44;
 pub const HOVER_RETURN_OFFSET: usize = HOVER_CALL_OFFSET + 4;
 pub const HOVER_CALL: Site = Site {
     name: "hover_call",
     offset: HOVER_CALL_OFFSET,
+    kind: Kind::Exact,
     guard: [
         0x0b, 0x09, 0x00, 0x94, 0x26, 0x00, 0x00, 0x14, 0xd5, 0x11, 0x00, 0x35, 0x69, 0x62, 0x41,
         0xb9, 0x3f, 0x05, 0x00, 0x71, 0x61, 0x11, 0x00, 0x54, 0x01, 0x01, 0x41, 0xf9, 0x60, 0x42,
@@ -71,10 +92,13 @@ pub const HOVER_CALL: Site = Site {
 };
 
 /// Pane text setter `(pane, text, units, flags)`; every pane text passes it.
+/// Called, never hooked: it grows the pane's buffer to fit (TextBox vtable
+/// `+0xe8`) before setting the text (`+0x110`).
 pub const SET_TEXT_OFFSET: usize = 0x37a2270;
 pub const SET_TEXT: Site = Site {
     name: "set_text",
     offset: SET_TEXT_OFFSET,
+    kind: Kind::Called,
     guard: [
         0xfc, 0x57, 0xbd, 0xa9, 0xf4, 0x4f, 0x01, 0xa9, 0xfd, 0x7b, 0x02, 0xa9, 0xfd, 0x83, 0x00,
         0x91, 0xff, 0x0b, 0x40, 0xd1, 0xff, 0x43, 0x00, 0xd1, 0xf4, 0x03, 0x01, 0xaa, 0xf3, 0x03,
@@ -90,6 +114,7 @@ pub const GET_INT_OFFSET: usize = 0x1739120;
 pub const GET_INT: Site = Site {
     name: "get_int",
     offset: GET_INT_OFFSET,
+    kind: Kind::Called,
     guard: [
         0xf3, 0x0f, 0x1e, 0xf8, 0xfd, 0x7b, 0x01, 0xa9, 0xfd, 0x43, 0x00, 0x91, 0xf3, 0x03, 0x00,
         0xaa, 0xfc, 0xfe, 0xff, 0x97, 0x20, 0x14, 0xf8, 0x37, 0x1f, 0xd0, 0x07, 0x71, 0x62, 0x15,
@@ -104,6 +129,7 @@ pub const GET_FLOAT_OFFSET: usize = 0x17393f0;
 pub const GET_FLOAT: Site = Site {
     name: "get_float",
     offset: GET_FLOAT_OFFSET,
+    kind: Kind::Called,
     guard: [
         0xf3, 0x0f, 0x1e, 0xf8, 0xfd, 0x7b, 0x01, 0xa9, 0xfd, 0x43, 0x00, 0x91, 0xf3, 0x03, 0x00,
         0xaa, 0x48, 0xfe, 0xff, 0x97, 0xe0, 0x03, 0x27, 0x1e, 0xc0, 0x1e, 0xf8, 0x37, 0x1f, 0xd0,
@@ -118,6 +144,7 @@ pub const FIGHTER_SLOT_OFFSET: usize = 0x3264270;
 pub const FIGHTER_SLOT: Site = Site {
     name: "fighter_slot",
     offset: FIGHTER_SLOT_OFFSET,
+    kind: Kind::Called,
     guard: [
         0xff, 0x43, 0x01, 0xd1, 0xf8, 0x5f, 0x01, 0xa9, 0xf6, 0x57, 0x02, 0xa9, 0xf4, 0x4f, 0x03,
         0xa9, 0xfd, 0x7b, 0x04, 0xa9, 0xfd, 0x03, 0x01, 0x91, 0xf5, 0x03, 0x01, 0xaa, 0xf3, 0x03,
@@ -132,6 +159,7 @@ pub const TO_GSP_OFFSET: usize = 0x17d1480;
 pub const TO_GSP: Site = Site {
     name: "to_gsp",
     offset: TO_GSP_OFFSET,
+    kind: Kind::Called,
     guard: [
         0xff, 0x03, 0x02, 0xd1, 0xea, 0x1b, 0x00, 0xfd, 0xe9, 0x23, 0x04, 0x6d, 0xf6, 0x57, 0x05,
         0xa9, 0xf4, 0x4f, 0x06, 0xa9, 0xfd, 0x7b, 0x07, 0xa9, 0xfd, 0xc3, 0x01, 0x91, 0x28, 0x3c,
@@ -142,9 +170,8 @@ pub const TO_GSP: Site = Site {
 };
 
 /// Every site checked before anything is installed.
-pub const SITES: [&Site; 8] = [
-    &ARM,
-    &DISARM,
+pub const SITES: [&Site; 7] = [
+    &APPLY,
     &HOVER_CALL,
     &SET_TEXT,
     &GET_INT,
@@ -152,6 +179,19 @@ pub const SITES: [&Site; 8] = [
     &FIGHTER_SLOT,
     &TO_GSP,
 ];
+
+/// `nn::ui2d::TextBox` fields the setter compares before rewriting a pane
+/// (`.37a2494..37a24a0`): the current UTF-16 string and its length.
+pub mod textbox {
+    pub const STRING: usize = 0xd8;
+    pub const LENGTH: usize = 0x112;
+}
+
+/// Whether the setter took its GSP path (`.1a1c0d0..1a1c0e8`): `info[0]`
+/// set and mode 1, or mode 2.
+pub fn shows_number(has_value: u32, mode: u32) -> bool {
+    (has_value != 0 && mode == 1) || mode == 2
+}
 
 /// Pointer chains from the image base (as `.17049d0`, `.17994c0`,
 /// `.1a27608` and `.1704a0c` walk them).
@@ -363,16 +403,40 @@ mod tests {
 
     #[test]
     fn guards_start_with_the_expected_instructions() {
-        assert_eq!(ARM.guard[..4], [0x63, 0x12, 0x40, 0xb9]); // ldr w3, [x19, #0x10]
-        assert_eq!(DISARM.guard[..4], [0xe0, 0x07, 0x40, 0xf9]); // ldr x0, [sp, #8]
+        assert_eq!(APPLY.guard[..4], [0xe0, 0x07, 0x40, 0xf9]); // ldr x0, [sp, #8]
         assert_eq!(HOVER_CALL.guard[..4], [0x0b, 0x09, 0x00, 0x94]); // bl .1a1c070
         assert_eq!(SET_TEXT.guard[..4], [0xfc, 0x57, 0xbd, 0xa9]); // stp x28, x21, [sp, #-0x30]!
 
         // bl .1a1c070 from .1a19c44: imm26 = (0x1a1c070 - 0x1a19c44) / 4.
         let imm = u32::from_le_bytes(HOVER_CALL.guard[..4].try_into().unwrap()) & 0x03ff_ffff;
         assert_eq!(HOVER_CALL_OFFSET + imm as usize * 4, 0x1a1c070);
-        // The disarm site lies inside the arm guard, 0x2c bytes on.
-        assert_eq!(&ARM.guard[0x2c..0x30], &DISARM.guard[..4]);
+    }
+
+    #[test]
+    fn hooked_and_called_sites_are_checked_differently() {
+        let hooked: Vec<_> = SITES
+            .iter()
+            .filter(|s| s.kind == Kind::Exact)
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(hooked, ["apply", "hover_call"]);
+        assert_eq!(APPLY.checked(), 0..64);
+        assert_eq!(SET_TEXT.checked(), ENTRY_PATCH..64);
+        assert_eq!(HOOKED_SITES, [APPLY_OFFSET]);
+        // Every called function keeps enough vanilla bytes to be recognised.
+        for site in SITES.iter().filter(|s| s.kind == Kind::Called) {
+            assert!(site.checked().len() >= 48, "{}", site.name);
+        }
+    }
+
+    #[test]
+    fn gsp_path_matches_the_setter() {
+        assert!(shows_number(1, 1));
+        assert!(shows_number(0, 2));
+        assert!(shows_number(1, 2));
+        assert!(!shows_number(0, 1));
+        assert!(!shows_number(1, 0));
+        assert!(!shows_number(0, 0));
     }
 
     #[test]
