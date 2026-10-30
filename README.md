@@ -32,6 +32,13 @@ shows wins.*
   run on the fighter's record against opponents at your rating. K follows
   your Preferred Rules (2:00 time: 0.9, 3:00: 1.0).
 - UI only: no rating, network or match state changes.
+- **No clashes:** one hook, inside the character select's own GSP code; it
+  calls the game's text setter instead of hooking it. If another plugin
+  wants the same instruction, the two share one hook through
+  `ssbu_inline_site_1a1c118_v1` (found with `nn::ro::LookupSymbol`, any load
+  order) and both keep working. Other plugins can also show the label
+  themselves through `gsp_visualizer_label_v1`
+  ([details](docs/CSS-LABEL.md#what-the-plugin-does)).
 
 ## Install
 

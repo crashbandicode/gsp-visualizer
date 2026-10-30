@@ -7,3 +7,4 @@ pub mod label;
 pub mod model;
 #[cfg(target_os = "switch")]
 mod runtime;
+pub mod share;

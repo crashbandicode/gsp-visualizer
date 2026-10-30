@@ -8,12 +8,13 @@
 use crate::glicko::{self, Estimate, Params};
 use crate::label;
 use crate::model::{self, addr, key, Kind, Line, Settings, Site, ENTRY_PATCH};
+use crate::share;
 use core::cell::UnsafeCell;
 use core::fmt::Write as _;
 use skyline::hooks::{getRegionAddress, InlineCtx, Region};
 use skyline::nn;
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 
 const DATA_DIR: &str = "sd:/ultimate/gsp-visualizer";
 const OPEN_WRITE_APPEND: i32 = 2 | 4;
@@ -56,8 +57,13 @@ unsafe impl<T> Sync for Owned<T> {}
 static TEXT_BASE: AtomicU64 = AtomicU64::new(0);
 /// `Settings::to_bits`; diagnostic builds reload it from `diag.txt`.
 static SETTINGS: AtomicU64 = AtomicU64::new(0);
-/// Set once the hook is installed; the exported label function needs it.
+/// Set once the label runs (this plugin's hook or a site owner's); the
+/// exported label function needs it.
 static INSTALLED: AtomicBool = AtomicBool::new(false);
+/// Set when this plugin installed the hook itself.
+static OWNER: AtomicBool = AtomicBool::new(false);
+/// Version and guard check result: 0 not run, 1 passed, 2 failed.
+static CHECKS: AtomicU8 = AtomicU8::new(0);
 /// The text handed to the game; static, so it outlives the call.
 static COMPOSED: Owned<[u16; TEXT_LEN]> = Owned(UnsafeCell::new([0; TEXT_LEN]));
 
@@ -186,12 +192,24 @@ unsafe fn compute(fighter: u64, inputs: &mut Inputs) -> Option<(u32, Estimate)> 
     ))
 }
 
-/// The world GSP setter after its text call (the plugin's only hook). For the
-/// hovered fighter's GSP (called from `.1a19c44`, GSP path) it sets the pane
-/// again through the game's own setter: the text the game just set, then the
-/// label. Every other call passes untouched.
+/// The world GSP setter after its text call: the one hook, installed only
+/// when this plugin owns the site (see `share`). Runs the label, then every
+/// callback other plugins registered for the site.
 #[skyline::hook(offset = model::APPLY_OFFSET, inline)]
 unsafe fn apply(ctx: &mut InlineCtx) {
+    label_callback(ctx);
+    SHARED.for_each(|callback| {
+        let callback: unsafe extern "C" fn(*mut InlineCtx) = core::mem::transmute(callback);
+        callback(ctx);
+    });
+}
+
+/// For the hovered fighter's GSP (called from `.1a19c44`, GSP path) sets the
+/// pane again through the game's own setter: the text the game just set, then
+/// the label. Every other call passes untouched. Called from this plugin's
+/// hook, or from the site owner's when another plugin owns `.1a1c118`.
+unsafe extern "C" fn label_callback(ctx: *mut InlineCtx) {
+    let ctx = &mut *ctx;
     let info = ctx.registers[19].x();
     if !model::shows_number(read_u32(info), read_u32(info + 0xc)) {
         return;
@@ -238,13 +256,33 @@ unsafe fn apply(ctx: &mut InlineCtx) {
     set_text(pane, out.as_ptr(), len as i32, 0);
 }
 
+/// Callbacks other plugins registered for `.1a1c118` (see `share`).
+static SHARED: share::Callbacks = share::Callbacks::new();
+static SITE_SHARE: share::SiteShareV1 = share::SiteShareV1 {
+    abi_version: share::ABI_VERSION,
+    offset: model::APPLY_OFFSET as u64,
+    register: register_apply,
+};
+
+/// Inline-hook sharing v1 for `.1a1c118` (see `share`).
+#[no_mangle]
+pub extern "C" fn ssbu_inline_site_1a1c118_v1() -> *const share::SiteShareV1 {
+    &SITE_SHARE
+}
+
+/// Another plugin's callback for `.1a1c118`; accepted when this plugin will
+/// hook the site (13.0.5, every site as expected).
+unsafe extern "C" fn register_apply(callback: usize) -> bool {
+    checks_pass() && SHARED.push(callback)
+}
+
 /// Plugin API v1, found by other plugins with `nn::ro::LookupSymbol`: the
-/// main-image offsets this plugin has hooked (none unless installed), so a
+/// main-image offsets this plugin has hooked (none unless it owns them), so a
 /// plugin can leave them alone or detect gsp-visualizer. Writes up to
 /// `capacity` offsets to `out` and returns how many it hooked.
 #[no_mangle]
 pub unsafe extern "C" fn gsp_visualizer_hooked_sites_v1(out: *mut usize, capacity: usize) -> usize {
-    if !INSTALLED.load(Ordering::Acquire) {
+    if !OWNER.load(Ordering::Acquire) {
         return 0;
     }
     if !out.is_null() {
@@ -610,6 +648,36 @@ fn version_is_supported() -> bool {
     version.name[..end] == *model::SUPPORTED_VERSION.as_bytes()
 }
 
+/// The game version and every site's guard, checked once; also asked by
+/// another plugin's registration, which can come before this `main`.
+fn checks_pass() -> bool {
+    match CHECKS.load(Ordering::Acquire) {
+        1 => true,
+        2 => false,
+        _ => {
+            let pass = version_is_supported()
+                && model::SITES
+                    .iter()
+                    .all(|site| unsafe { guard_matches(site) });
+            CHECKS.store(if pass { 1 } else { 2 }, Ordering::Release);
+            pass
+        }
+    }
+}
+
+/// The `SiteShareV1` table whoever's `ssbu_inline_site_1a1c118_v1` resolves
+/// first returns (0 when no plugin exports it).
+fn site_owner_table() -> usize {
+    let mut export = 0usize;
+    unsafe { nn::ro::LookupSymbol(&mut export, b"ssbu_inline_site_1a1c118_v1\0".as_ptr()) };
+    if export == 0 {
+        return 0;
+    }
+    let export: extern "C" fn() -> *const share::SiteShareV1 =
+        unsafe { core::mem::transmute(export) };
+    export() as usize
+}
+
 /// Appends the install line to `events.log` and the Skyline log.
 fn report_install(report: &mut Line<256>) {
     let _ = write!(
@@ -643,11 +711,13 @@ pub fn main() {
     }
     for site in model::SITES {
         if !unsafe { guard_matches(site) } {
+            CHECKS.store(2, Ordering::Release);
             let _ = write!(report, " result=guard_mismatch site={}", site.name);
             report_install(&mut report);
             return;
         }
     }
+    CHECKS.store(1, Ordering::Release);
     TEXT_BASE.store(
         unsafe { getRegionAddress(Region::Text) as u64 },
         Ordering::Relaxed,
@@ -659,12 +729,37 @@ pub fn main() {
         SETTINGS.store(loaded.to_bits(), Ordering::Release);
         let _ = write!(report, " diag {loaded:?}");
     }
-    skyline::install_hooks!(apply);
-    INSTALLED.store(true, Ordering::Release);
-    let _ = write!(report, " result=installed hooks=apply");
+    // One hook per instruction: install it when this plugin owns `.1a1c118`,
+    // otherwise run the label from the owner's hook (see `share`).
+    let own_table = &SITE_SHARE as *const share::SiteShareV1 as usize;
+    match share::role(site_owner_table(), own_table) {
+        share::Role::Owner => {
+            skyline::install_hooks!(apply);
+            OWNER.store(true, Ordering::Release);
+            INSTALLED.store(true, Ordering::Release);
+            let _ = write!(
+                report,
+                " result=installed role=owner hooks=apply guests={}",
+                SHARED.len()
+            );
+        }
+        share::Role::Guest(table) => {
+            let api = unsafe { &*(table as *const share::SiteShareV1) };
+            if share::compatible(api, model::APPLY_OFFSET)
+                && unsafe { (api.register)(label_callback as *const () as usize) }
+            {
+                INSTALLED.store(true, Ordering::Release);
+                let _ = write!(report, " result=installed role=guest owner={table:#x}");
+            } else {
+                let _ = write!(report, " result=owner_refused owner={table:#x}");
+                report_install(&mut report);
+                return;
+            }
+        }
+    }
     for site in model::SITES {
         if unsafe { entry_hooked(site) } {
-            let _ = write!(report, " shared={}", site.name);
+            let _ = write!(report, " entry_hooked={}", site.name);
         }
     }
     report_install(&mut report);

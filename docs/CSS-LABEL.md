@@ -24,21 +24,57 @@ offset = address + 0x100), checked in Eden the same day (below).
 
 ## What the plugin does
 
-- **Arm** (inline hook at `1a1c0ec`, the GSP path of `1a1c070`): only when
-  the saved return address is `1a19c48`, the hover call. Reads the fighter
-  key at info − 8, the fighter's A, B and C from the rating cache, settings
-  9010, 1201, 1000, 1001, 1002 and the rules' K through the game's getters
-  `1739120`/`17393f0`, and the threshold's GSP through `17d1480`. Stores the
-  label and the pane (`*(*(sp + 8) + 0x10)`, the pane `377a280` will set).
-- **Append** (function hook on `37a2270`): when the pane is the armed one,
-  passes the game's text plus a line break and `Elite 14,749,911 · 5 wins`
-  (or `· 7 losses` at or above the threshold), with the same thousands
-  separator as the game's number. Any other text passes through unchanged.
-- **Disarm** (inline hook at `1a1c118`, where both paths meet).
+One inline hook (0.2.0), at `1a1c118` in `1a1c070`, after the game wrote
+the GSP text, where both paths meet:
 
-Every site and called function is checked against 64 bytes of the 13.0.5
-image before anything is installed; any mismatch, or another game version,
-installs nothing. The plugin writes no game state and sends nothing.
+- Acts only on the GSP path (info `+0` and mode `+0xc`, as the setter tests
+  them) and only when the saved return address is `1a19c48`, the hover call.
+- Reads the game's text from the pane (`*(*(sp + 8) + 0x10)`; TextBox
+  string `+0xd8`, length `+0x112`), the fighter key at info − 8, the
+  fighter's A, B and C from the rating cache, settings 9010, 1201, 1000,
+  1001, 1002 and the rules' K through the game's getters
+  `1739120`/`17393f0`, and the threshold's GSP through `17d1480`.
+- Calls the game's setter `37a2270` with the game's text, a line break and
+  `Elite 14,749,911 · 5 wins` (or `· 7 losses` at or above the threshold),
+  with the same thousands separator as the game's number.
+
+0.1.0 hooked the setter `37a2270` itself, which every UI text goes through.
+0.2.0 only calls it, so a plugin that hooks the setter runs inside that call
+and both keep working.
+
+**Checks before anything is installed:** the hooked site and the hover call
+must match the 13.0.5 bytes exactly; another plugin's hook there means this
+plugin installs nothing (`result=guard_mismatch site=…`). The functions it
+only calls must match from byte 16 on: their first 16 bytes may carry
+another plugin's entry hook, which is fine to call through, and the install
+line names them (`entry_hooked=<name>`). Another game version installs
+nothing. The plugin writes no game state and sends nothing.
+
+**Sharing the hook with other plugins (inline-hook sharing v1,
+`src/share.rs`).** Two inline hooks on one instruction collide, so a plugin
+that wants `1a1c118` exports `ssbu_inline_site_1a1c118_v1()`, returning a
+table with a `register(callback)` function, and looks that name up with
+`nn::ro::LookupSymbol` before hooking. Every plugin gets the same answer in
+any load order. The plugin whose table comes back owns the site: it
+installs the one hook and calls every registered callback from it, after its
+own. The others register their callback there and install nothing. The
+install line says which: `role=owner … guests=<n>` or
+`role=guest owner=<address>`. A plugin that registers before the owner's
+`main` runs is still accepted: `register` runs the owner's version and
+guard checks itself, and refuses (`result=owner_refused`) only when the
+owner would not hook either. ssbu-quiet-elite-switch uses the same file
+for its own site.
+
+**Plugin API v1**, for other plugins through `nn::ro::LookupSymbol` (any
+load order, since Skyline loads every plugin before any `main` runs):
+
+- `gsp_visualizer_hooked_sites_v1(out: *mut usize, capacity: usize) -> usize`:
+  the main-image offsets this plugin has hooked (`0x1a1c118`; none when it
+  did not install), so a plugin can leave them alone.
+- `gsp_visualizer_label_v1(fighter: u64, out: *mut u16, capacity: usize) -> usize`:
+  the label for a fighter's Hash40 (`Elite <GSP> · <n> wins|losses`,
+  UTF-16, NUL-terminated; 0 when unavailable), to show it elsewhere without
+  hooking. Call it on the game's UI thread.
 
 ## Rating cache and other addresses
 
