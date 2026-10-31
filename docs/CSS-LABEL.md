@@ -24,7 +24,7 @@ offset = address + 0x100), checked in Eden the same day (below).
 
 ## What the plugin does
 
-One inline hook (0.2.0), at `1a1c118` in `1a1c070`, after the game wrote
+One inline hook (since 0.2.0), at `1a1c118` in `1a1c070`, after the game wrote
 the GSP text, where both paths meet:
 
 - Acts only on the GSP path (info `+0` and mode `+0xc`, as the setter tests
@@ -42,13 +42,27 @@ the GSP text, where both paths meet:
 0.2.0 only calls it, so a plugin that hooks the setter runs inside that call
 and both keep working.
 
-**Checks before anything is installed:** the hooked site and the hover call
-must match the 13.0.5 bytes exactly; another plugin's hook there means this
-plugin installs nothing (`result=guard_mismatch site=…`). The functions it
-only calls must match from byte 16 on: their first 16 bytes may carry
-another plugin's entry hook, which is fine to call through, and the install
-line names them (`entry_hooked=<name>`). Another game version installs
-nothing. The plugin writes no game state and sends nothing.
+**Checks before anything is installed** (0.3.0, `src/chain.rs`, the rules
+elite-rematch uses): the 64 bytes at each site must be the 13.0.5 ones,
+apart from other plugins' Skyline hooks (a one-word `b`, or a far jump).
+
+- The hooked site `1a1c118`: another plugin's far jump there gets chained
+  (this hook goes on a small stub that then jumps on to that plugin's
+  handler), and another plugin's one-word branch is relocated into this
+  hook (kept only if this hook is a one-word branch too; otherwise the bytes
+  are put back). The install line says `apply=<stock|chain|branch>/<near|far>`.
+  Anything else there: `apply=foreign/skipped`, nothing installed.
+- The hover call `1a19c44` must keep its own `bl` (a hook on it would move
+  the return address the hook checks into that plugin's trampoline); hooks
+  after it are fine.
+- The functions it only calls may carry other plugins' hooks anywhere; calls
+  go through them. The install line names those sites (`other_hook=<name>`).
+- When a site the label relies on fails, the label stays off
+  (`label=off site=<name>`), but the owner still hooks `1a1c118` for the
+  plugins sharing it (`result=hook_only`).
+
+Another game version installs nothing. The plugin writes no game state and
+sends nothing.
 
 **Sharing the hook with other plugins (inline-hook sharing v1,
 `src/share.rs`).** Two inline hooks on one instruction collide, so a plugin
@@ -60,10 +74,11 @@ installs the one hook and calls every registered callback from it, after its
 own. The others register their callback there and install nothing. The
 install line says which: `role=owner … guests=<n>` or
 `role=guest owner=<address>`. A plugin that registers before the owner's
-`main` runs is still accepted: `register` runs the owner's version and
-guard checks itself, and refuses (`result=owner_refused`) only when the
-owner would not hook either. ssbu-quiet-elite-switch uses the same file
-for its own site.
+`main` runs is still accepted: `register` then checks the version and reads
+the site the way the owner will; after the owner's `main` it answers from
+whether the owner hooked (a guest it turns down logs
+`result=owner_refused`). ssbu-quiet-elite-switch uses the same files
+(`share.rs`, `chain.rs`) for its own site.
 
 **Plugin API v1**, for other plugins through `nn::ro::LookupSymbol` (any
 load order, since Skyline loads every plugin before any `main` runs):
@@ -134,3 +149,15 @@ fresh profile (every fighter unplayed), English, Quickplay → Solo.
   `Elite 14,749,911 · 2 losses` (Sephiroth) and `· 2 wins`. A first run
   showed the probe refusing (`guard_mismatch`) because it guarded the site
   before the election; both plugins now elect first.
+- 0.3.0 (diag) with `foreign=inline` (before its own hook the plugin hooks
+  `1a1c118` and `37a2288`, inside the text setter, as a plugin that does not
+  share would), ssbu-quiet-elite-switch 0.2.0 (diag, the same),
+  elite-rematch 0.3.1 and the share probe (run e15): install line
+  `foreign=inline role=owner apply=branch/near label=on
+  other_hook=set_text result=installed heap_allocations=0`. Hovering
+  Sephiroth showed `15,653,112⏎Elite 14,749,911 · 2 losses`; the stand-in at
+  `1a1c118` ran 10 times and the one in the setter 2,218 times, and the
+  probe's callback still ran from this plugin's hook.
+- The same with `foreign=far` (a far jump on `1a1c118` to a stand-in handler,
+  run e16): `apply=chain/far … result=installed`; the label showed, the
+  stand-ins ran (far 10, setter 2,206) and the probe's callback ran.

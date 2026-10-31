@@ -11,27 +11,27 @@
 //! the setter again with the label appended. It hooks nothing that other UI
 //! code shares; another plugin's hook on the setter just runs inside that call.
 
+use crate::chain;
 use crate::label;
 
 pub const SUPPORTED_VERSION: &str = "13.0.5";
 
-/// How a site is checked before anything is installed.
+/// How a site is checked before anything is installed. Other plugins' hooks
+/// are accepted as `chain` reads them; any other change is not.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
-    /// Hooked or relied on in place: all 64 bytes must be the vanilla ones.
-    /// Another plugin's hook here means this plugin installs nothing.
-    Exact,
-    /// A function the plugin only calls: its first [`ENTRY_PATCH`] bytes may
-    /// carry another plugin's hook (calling through it is fine); the rest
-    /// must be vanilla.
+    /// The plugin's inline hook goes here: another plugin's hook on it is
+    /// chained onto (`chain::entry`).
+    Hooked,
+    /// Relied on in place (the hover call, whose return address the hook
+    /// checks): its first instruction must be the 13.0.5 one.
+    Relied,
+    /// A function the plugin only calls: other plugins' hooks anywhere in it
+    /// are fine to call through.
     Called,
 }
 
-/// Bytes a Skyline hook may rewrite at a function entry (an absolute jump:
-/// `ldr x17, #8; br x17; .quad target`).
-pub const ENTRY_PATCH: usize = 16;
-
-/// A code site and the 64 bytes that must be there (13.0.5 image).
+/// A code site and the 64 bytes there in the 13.0.5 image.
 pub struct Site {
     pub name: &'static str,
     pub offset: usize,
@@ -40,11 +40,19 @@ pub struct Site {
 }
 
 impl Site {
-    /// The guard bytes the check compares.
-    pub fn checked(&self) -> core::ops::Range<usize> {
+    /// The 13.0.5 instructions.
+    pub fn stock(&self) -> [u32; chain::WORDS] {
+        chain::words(&self.guard)
+    }
+
+    /// Whether the plugin can use this site as `words` (at `address`) hold
+    /// it: for the hooked site, whether its hook can go there.
+    pub fn usable(&self, words: &[u32; chain::WORDS], address: u64) -> bool {
+        let stock = self.stock();
         match self.kind {
-            Kind::Exact => 0..64,
-            Kind::Called => ENTRY_PATCH..64,
+            Kind::Hooked => chain::entry(&stock, words, address) != chain::Entry::Foreign,
+            Kind::Relied => chain::usable(&stock, words, address, 1),
+            Kind::Called => chain::usable(&stock, words, address, 0),
         }
     }
 }
@@ -57,7 +65,7 @@ pub const APPLY_OFFSET: usize = 0x1a1c118;
 pub const APPLY: Site = Site {
     name: "apply",
     offset: APPLY_OFFSET,
-    kind: Kind::Exact,
+    kind: Kind::Hooked,
     guard: [
         0xe0, 0x07, 0x40, 0xf9, 0x08, 0xc1, 0x01, 0xb0, 0x08, 0xa1, 0x26, 0x91, 0xe8, 0x7f, 0x00,
         0xa9, 0x40, 0x00, 0x00, 0xb4, 0x85, 0x4a, 0x7c, 0x94, 0xfd, 0x7b, 0x42, 0xa9, 0xf4, 0x4f,
@@ -67,21 +75,23 @@ pub const APPLY: Site = Site {
     ],
 };
 
-// The site is inside the setter `.1a1c070` (which returns at `.1a1c13c`).
-const _: () = assert!(0x1a1c070 < APPLY_OFFSET && APPLY_OFFSET + ENTRY_PATCH <= 0x1a1c13c);
+// The site and the words a hook replaces are inside the setter `.1a1c070`
+// (which returns at `.1a1c13c`).
+const _: () = assert!(0x1a1c070 < APPLY_OFFSET && APPLY_OFFSET + 16 <= 0x1a1c13c);
 
 /// The main-image offsets this plugin hooks, as `gsp_visualizer_hooked_sites_v1`
 /// reports them to other plugins.
 pub const HOOKED_SITES: [usize; 1] = [APPLY_OFFSET];
 
 /// The hover call `bl .1a1c070`; the return address the hook expects is the
-/// next instruction. Checked, never hooked.
+/// next instruction. Checked, never hooked: another plugin's hook on the
+/// call itself would move the return address into its trampoline.
 pub const HOVER_CALL_OFFSET: usize = 0x1a19c44;
 pub const HOVER_RETURN_OFFSET: usize = HOVER_CALL_OFFSET + 4;
 pub const HOVER_CALL: Site = Site {
     name: "hover_call",
     offset: HOVER_CALL_OFFSET,
-    kind: Kind::Exact,
+    kind: Kind::Relied,
     guard: [
         0x0b, 0x09, 0x00, 0x94, 0x26, 0x00, 0x00, 0x14, 0xd5, 0x11, 0x00, 0x35, 0x69, 0x62, 0x41,
         0xb9, 0x3f, 0x05, 0x00, 0x71, 0x61, 0x11, 0x00, 0x54, 0x01, 0x01, 0x41, 0xf9, 0x60, 0x42,
@@ -412,21 +422,37 @@ mod tests {
         assert_eq!(HOVER_CALL_OFFSET + imm as usize * 4, 0x1a1c070);
     }
 
+    /// Where each site would be with the image at a page-aligned base.
+    fn at(site: &Site) -> u64 {
+        0x80_0000_0000 + site.offset as u64
+    }
+
     #[test]
-    fn hooked_and_called_sites_are_checked_differently() {
-        let hooked: Vec<_> = SITES
-            .iter()
-            .filter(|s| s.kind == Kind::Exact)
-            .map(|s| s.name)
-            .collect();
-        assert_eq!(hooked, ["apply", "hover_call"]);
-        assert_eq!(APPLY.checked(), 0..64);
-        assert_eq!(SET_TEXT.checked(), ENTRY_PATCH..64);
+    fn sites_are_checked_by_kind() {
+        let kinds: Vec<_> = SITES.iter().map(|s| (s.name, s.kind)).collect();
+        assert_eq!(kinds[..2], [("apply", Kind::Hooked), ("hover_call", Kind::Relied)]);
+        assert!(kinds[2..].iter().all(|(_, kind)| *kind == Kind::Called));
         assert_eq!(HOOKED_SITES, [APPLY_OFFSET]);
-        // Every called function keeps enough vanilla bytes to be recognised.
-        for site in SITES.iter().filter(|s| s.kind == Kind::Called) {
-            assert!(site.checked().len() >= 48, "{}", site.name);
+        for site in SITES {
+            assert!(site.usable(&site.stock(), at(site)), "{}", site.name);
         }
+    }
+
+    #[test]
+    fn other_plugins_hooks_are_accepted_by_kind() {
+        // A one-word branch over each site's first instruction.
+        let hooked = |site: &Site| {
+            let mut words = site.stock();
+            words[0] = 0x1400_0100;
+            site.usable(&words, at(site))
+        };
+        assert!(hooked(&APPLY)); // chained
+        assert!(!hooked(&HOVER_CALL)); // the call itself must stay
+        assert!(hooked(&SET_TEXT)); // called through
+        // Anything that is not a hook is not.
+        let mut words = SET_TEXT.stock();
+        words[6] = 0xd503_201f; // nop over `mov x20, x1`
+        assert!(!SET_TEXT.usable(&words, at(&SET_TEXT)));
     }
 
     #[test]

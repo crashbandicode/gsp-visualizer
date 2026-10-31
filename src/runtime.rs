@@ -1,13 +1,15 @@
-//! Switch half: version and guard checks, the one inline hook in the
-//! character select's world GSP setter that re-sets the pane with the label,
-//! and the plugin API v1 exports (`gsp_visualizer_hooked_sites_v1`,
+//! Switch half: version and site checks, the one inline hook in the
+//! character select's world GSP setter that re-sets the pane with the label
+//! (shared through `share`, chained onto other plugins' hooks through
+//! `chain`), and the plugin API v1 exports (`gsp_visualizer_hooked_sites_v1`,
 //! `gsp_visualizer_label_v1`). The hook runs on the game's UI thread and
 //! allocates nothing; the diagnostic build formats events into a static ring
 //! that a writer thread appends to `events.log`.
 
+use crate::chain::{self, hook::Outcome, Entry};
 use crate::glicko::{self, Estimate, Params};
 use crate::label;
-use crate::model::{self, addr, key, Kind, Line, Settings, Site, ENTRY_PATCH};
+use crate::model::{self, addr, key, Kind, Line, Settings, Site};
 use crate::share;
 use core::cell::UnsafeCell;
 use core::fmt::Write as _;
@@ -62,8 +64,10 @@ static SETTINGS: AtomicU64 = AtomicU64::new(0);
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 /// Set when this plugin installed the hook itself.
 static OWNER: AtomicBool = AtomicBool::new(false);
-/// Version and guard check result: 0 not run, 1 passed, 2 failed.
-static CHECKS: AtomicU8 = AtomicU8::new(0);
+/// Whether everything the label relies on besides its hook checked out.
+static LABEL: AtomicBool = AtomicBool::new(false);
+/// `.1a1c118`: 0 until `main` decides it, then 1 hooked by this plugin, 2 not.
+static APPLY_STATE: AtomicU8 = AtomicU8::new(0);
 /// The text handed to the game; static, so it outlives the call.
 static COMPOSED: Owned<[u16; TEXT_LEN]> = Owned(UnsafeCell::new([0; TEXT_LEN]));
 
@@ -193,11 +197,13 @@ unsafe fn compute(fighter: u64, inputs: &mut Inputs) -> Option<(u32, Estimate)> 
 }
 
 /// The world GSP setter after its text call: the one hook, installed only
-/// when this plugin owns the site (see `share`). Runs the label, then every
-/// callback other plugins registered for the site.
-#[skyline::hook(offset = model::APPLY_OFFSET, inline)]
-unsafe fn apply(ctx: &mut InlineCtx) {
-    label_callback(ctx);
+/// when this plugin owns the site (see `share`), on another plugin's hook
+/// there if it found one (see `chain`). Runs the label, then every callback
+/// other plugins registered for the site.
+unsafe extern "C" fn apply(ctx: &mut InlineCtx) {
+    if LABEL.load(Ordering::Relaxed) {
+        label_callback(ctx);
+    }
     SHARED.for_each(|callback| {
         let callback: unsafe extern "C" fn(*mut InlineCtx) = core::mem::transmute(callback);
         callback(ctx);
@@ -270,10 +276,15 @@ pub extern "C" fn ssbu_inline_site_1a1c118_v1() -> *const share::SiteShareV1 {
     &SITE_SHARE
 }
 
-/// Another plugin's callback for `.1a1c118`; accepted when this plugin will
-/// hook the site (13.0.5, every site as expected).
+/// Another plugin's callback for `.1a1c118`; taken when this plugin hooks
+/// the site (or will: a registration can come before this `main`, and after
+/// it the site holds this plugin's hook, so the answer is `main`'s).
 unsafe extern "C" fn register_apply(callback: usize) -> bool {
-    checks_pass() && SHARED.push(callback)
+    let hooks = match APPLY_STATE.load(Ordering::Acquire) {
+        0 => version_is_supported() && usable(&model::APPLY),
+        state => state == 1,
+    };
+    hooks && SHARED.push(callback)
 }
 
 /// Plugin API v1, found by other plugins with `nn::ro::LookupSymbol`: the
@@ -542,6 +553,39 @@ mod diag {
         Settings::parse(&buf[..len])
     }
 
+    /// `foreign=` in `diag.txt` (see `chain::Foreign`).
+    pub fn foreign() -> chain::Foreign {
+        let mut buf = [0u8; 256];
+        let len = read_diag(&mut buf);
+        chain::Foreign::parse(&buf[..len])
+    }
+
+    /// Hooks the sites as a plugin loaded before this one would without
+    /// sharing: `.1a1c118` (inline, or a far jump) and, inside the pane text
+    /// setter the label calls, `.37a2288` (`mov x20, x1`).
+    pub unsafe fn hook_as_another_plugin(foreign: chain::Foreign) {
+        use chain::hook::standin;
+        let text = getRegionAddress(Region::Text) as u64;
+        let apply = text + model::APPLY_OFFSET as u64;
+        match foreign {
+            chain::Foreign::Far => standin::far(apply),
+            _ => standin::inline(apply, 0),
+        }
+        standin::inline(text + model::SET_TEXT_OFFSET as u64 + 0x18, 1);
+    }
+
+    /// Logs the stand-ins' runs when they change.
+    fn report_standins(last: &mut [u64; 3]) {
+        let hits = chain::hook::standin::HITS.each_ref().map(|h| h.load(Ordering::Relaxed));
+        if hits != *last {
+            *last = hits;
+            push(format_args!(
+                "diag standin apply_inline={} set_text_inline={} apply_far={}",
+                hits[0], hits[1], hits[2]
+            ));
+        }
+    }
+
     fn reload_settings() {
         let loaded = load_settings();
         if SETTINGS.swap(loaded.to_bits(), Ordering::AcqRel) != loaded.to_bits() {
@@ -583,6 +627,7 @@ mod diag {
     extern "C" fn writer_main(_: *mut skyline::libc::c_void) {
         let mut tail = 0;
         let mut round = 0u32;
+        let mut standins = [0; 3];
         loop {
             unsafe {
                 nn::os::SleepThread(nn::TimeSpan {
@@ -592,6 +637,7 @@ mod diag {
             round = round.wrapping_add(1);
             if round.is_multiple_of(10) {
                 reload_settings();
+                report_standins(&mut standins);
             }
             drain(&mut tail);
         }
@@ -619,26 +665,36 @@ mod diag {
     }
 }
 
-/// The site's bytes in the running image, if it lies inside `.text`.
-unsafe fn site_bytes(site: &Site) -> Option<&'static [u8]> {
-    let base = getRegionAddress(Region::Text) as usize;
-    let end = getRegionAddress(Region::Rodata) as usize;
-    let address = base + site.offset;
-    (address.is_multiple_of(4) && address + site.guard.len() <= end)
-        .then(|| core::slice::from_raw_parts(address as *const u8, site.guard.len()))
+/// The site's address, when its 64 bytes are in `.text`.
+unsafe fn site_address(site: &Site) -> Option<u64> {
+    let base = getRegionAddress(Region::Text) as u64;
+    let end = getRegionAddress(Region::Rodata) as u64;
+    let address = base + site.offset as u64;
+    (address.is_multiple_of(4) && address + 64 <= end).then_some(address)
 }
 
-/// The bytes the site's kind requires are the vanilla ones.
-unsafe fn guard_matches(site: &Site) -> bool {
-    let range = site.checked();
-    site_bytes(site).is_some_and(|bytes| bytes[range.clone()] == site.guard[range])
+/// The site's instructions now, with its address.
+unsafe fn site_words(site: &Site) -> Option<(u64, [u32; chain::WORDS])> {
+    site_address(site).map(|address| (address, chain::hook::words_at(address)))
 }
 
-/// A called function whose entry another plugin has hooked (calls go
-/// through that hook, so both plugins keep working).
-unsafe fn entry_hooked(site: &Site) -> bool {
-    site.kind == Kind::Called
-        && site_bytes(site).is_some_and(|bytes| bytes[..ENTRY_PATCH] != site.guard[..ENTRY_PATCH])
+/// Whether the plugin can use the site as it is now (see `Site::usable`).
+unsafe fn usable(site: &Site) -> bool {
+    site_words(site).is_some_and(|(address, words)| site.usable(&words, address))
+}
+
+/// Another plugin's hook is on a site the label relies on (calls and the
+/// code after the hover call go through it, so both plugins keep working).
+unsafe fn other_hook(site: &Site) -> bool {
+    site.kind != Kind::Hooked && site_words(site).is_some_and(|(_, words)| words != site.stock())
+}
+
+/// Hooks `.1a1c118`, on another plugin's hook there if it finds one.
+unsafe fn hook_apply() -> (Entry, Outcome) {
+    match site_address(&model::APPLY) {
+        Some(address) => chain::hook::inline(address, &model::APPLY.stock(), apply),
+        None => (Entry::Foreign, Outcome::Skipped),
+    }
 }
 
 fn version_is_supported() -> bool {
@@ -646,23 +702,6 @@ fn version_is_supported() -> bool {
     unsafe { nn::oe::GetDisplayVersion(&mut version) };
     let end = version.name.iter().position(|v| *v == 0).unwrap_or(16);
     version.name[..end] == *model::SUPPORTED_VERSION.as_bytes()
-}
-
-/// The game version and every site's guard, checked once; also asked by
-/// another plugin's registration, which can come before this `main`.
-fn checks_pass() -> bool {
-    match CHECKS.load(Ordering::Acquire) {
-        1 => true,
-        2 => false,
-        _ => {
-            let pass = version_is_supported()
-                && model::SITES
-                    .iter()
-                    .all(|site| unsafe { guard_matches(site) });
-            CHECKS.store(if pass { 1 } else { 2 }, Ordering::Release);
-            pass
-        }
-    }
 }
 
 /// The `SiteShareV1` table whoever's `ssbu_inline_site_1a1c118_v1` resolves
@@ -679,7 +718,7 @@ fn site_owner_table() -> usize {
 }
 
 /// Appends the install line to `events.log` and the Skyline log.
-fn report_install(report: &mut Line<256>) {
+fn report_install(report: &mut Line<384>) {
     let _ = write!(
         report,
         " heap_allocations={}",
@@ -697,7 +736,7 @@ fn report_install(report: &mut Line<256>) {
 
 #[skyline::main(name = "gsp-visualizer")]
 pub fn main() {
-    let mut report = Line::<256>::new();
+    let mut report = Line::<384>::new();
     let _ = write!(
         report,
         "{} plugin=gsp-visualizer/{}",
@@ -709,26 +748,6 @@ pub fn main() {
         report_install(&mut report);
         return;
     }
-    // Election first (see `share`): when another plugin owns `.1a1c118` its
-    // hook has already changed those bytes, so only the owner guards the
-    // shared site itself; everything else this plugin relies on is guarded
-    // either way.
-    let own_table = &SITE_SHARE as *const share::SiteShareV1 as usize;
-    let role = share::role(site_owner_table(), own_table);
-    let owner = role == share::Role::Owner;
-    for site in model::SITES {
-        if (owner || site.offset != model::APPLY_OFFSET) && !unsafe { guard_matches(site) } {
-            if owner {
-                CHECKS.store(2, Ordering::Release);
-            }
-            let _ = write!(report, " result=guard_mismatch site={}", site.name);
-            report_install(&mut report);
-            return;
-        }
-    }
-    if owner {
-        CHECKS.store(1, Ordering::Release);
-    }
     TEXT_BASE.store(
         unsafe { getRegionAddress(Region::Text) as u64 },
         Ordering::Relaxed,
@@ -739,39 +758,74 @@ pub fn main() {
         let loaded = diag::load_settings();
         SETTINGS.store(loaded.to_bits(), Ordering::Release);
         let _ = write!(report, " diag {loaded:?}");
+        let foreign = diag::foreign();
+        if foreign != chain::Foreign::None {
+            unsafe { diag::hook_as_another_plugin(foreign) };
+            let _ = write!(report, " foreign={}", foreign.name());
+        }
     }
-    // One hook per instruction: install it when this plugin owns `.1a1c118`,
-    // otherwise run the label from the owner's hook.
-    match role {
+    // Everything the label relies on besides its hook; other plugins' hooks
+    // there are fine (see `chain`).
+    let missing = model::SITES
+        .iter()
+        .find(|site| site.kind != Kind::Hooked && !unsafe { usable(site) });
+    LABEL.store(missing.is_none(), Ordering::Release);
+    // Election first (see `share`): when another plugin owns `.1a1c118` its
+    // hook is already there, so only the owner reads that site.
+    let own_table = &SITE_SHARE as *const share::SiteShareV1 as usize;
+    let result = match share::role(site_owner_table(), own_table) {
         share::Role::Owner => {
-            skyline::install_hooks!(apply);
-            OWNER.store(true, Ordering::Release);
-            INSTALLED.store(true, Ordering::Release);
+            // Hooked even when the label cannot run, for the plugins sharing it.
+            let (entry, outcome) = unsafe { hook_apply() };
+            let hooked = outcome.hooked();
+            APPLY_STATE.store(if hooked { 1 } else { 2 }, Ordering::Release);
+            OWNER.store(hooked, Ordering::Release);
+            INSTALLED.store(hooked && missing.is_none(), Ordering::Release);
             let _ = write!(
                 report,
-                " result=installed role=owner hooks=apply guests={}",
+                " role=owner apply={}/{} guests={}",
+                entry.name(),
+                outcome.name(),
                 SHARED.len()
             );
+            if !hooked {
+                "not_installed"
+            } else if missing.is_some() {
+                "hook_only"
+            } else {
+                "installed"
+            }
         }
         share::Role::Guest(table) => {
+            APPLY_STATE.store(2, Ordering::Release);
+            let _ = write!(report, " role=guest owner={table:#x}");
             let api = unsafe { &*(table as *const share::SiteShareV1) };
-            if share::compatible(api, model::APPLY_OFFSET)
+            if missing.is_some() {
+                "not_installed"
+            } else if share::compatible(api, model::APPLY_OFFSET)
                 && unsafe { (api.register)(label_callback as *const () as usize) }
             {
                 INSTALLED.store(true, Ordering::Release);
-                let _ = write!(report, " result=installed role=guest owner={table:#x}");
+                "installed"
             } else {
-                let _ = write!(report, " result=owner_refused owner={table:#x}");
-                report_install(&mut report);
-                return;
+                "owner_refused"
             }
+        }
+    };
+    match missing {
+        None => {
+            let _ = write!(report, " label=on");
+        }
+        Some(site) => {
+            let _ = write!(report, " label=off site={}", site.name);
         }
     }
     for site in model::SITES {
-        if unsafe { entry_hooked(site) } {
-            let _ = write!(report, " entry_hooked={}", site.name);
+        if unsafe { other_hook(site) } {
+            let _ = write!(report, " other_hook={}", site.name);
         }
     }
+    let _ = write!(report, " result={result}");
     report_install(&mut report);
     #[cfg(feature = "diag")]
     diag::check_exports();

@@ -36,9 +36,13 @@ shows wins.*
   calls the game's text setter instead of hooking it. If another plugin
   wants the same instruction, the two share one hook through
   `ssbu_inline_site_1a1c118_v1` (found with `nn::ro::LookupSymbol`, any load
-  order) and both keep working. Other plugins can also show the label
-  themselves through `gsp_visualizer_label_v1`
+  order) and both keep working. A plugin that hooks it without sharing is
+  chained onto instead, and hooks in the game functions the label calls are
+  called through. Other plugins can also show the label themselves through
+  `gsp_visualizer_label_v1`
   ([details](docs/CSS-LABEL.md#what-the-plugin-does)).
+- **Small:** 124 KiB of game memory once loaded (code and data), no heap
+  use.
 
 ## Install
 
@@ -57,8 +61,10 @@ cargo skyline build --release
 
 Eden, 2026-10-30, one console on LAN Online with a rating runtime, English:
 both builds install and label every hovered fighter, and the logged inputs
-match the game. Not tested: Nintendo's live server, other languages, a real
-Switch. Details: [docs/CSS-LABEL.md](docs/CSS-LABEL.md).
+match the game. 0.3.0 also with stand-ins for a plugin that hooks the same
+instruction without sharing: the label still shows and the stand-ins still
+run. Not tested: Nintendo's live server, other languages, a real Switch.
+Details: [docs/CSS-LABEL.md](docs/CSS-LABEL.md).
 
 ## Research
 
