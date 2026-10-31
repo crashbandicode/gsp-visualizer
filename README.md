@@ -75,3 +75,7 @@ Details: [docs/CSS-LABEL.md](docs/CSS-LABEL.md).
   and the estimate, with example counts.
 - [docs/CSS-LABEL.md](docs/CSS-LABEL.md): the character select hook and the
   Eden check.
+
+## License
+
+MIT
