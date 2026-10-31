@@ -161,3 +161,11 @@ fresh profile (every fighter unplayed), English, Quickplay → Solo.
 - The same with `foreign=far` (a far jump on `1a1c118` to a stand-in handler,
   run e16): `apply=chain/far … result=installed`; the label showed, the
   stand-ins ran (far 10, setter 2,206) and the probe's callback ran.
+- The share probe loaded first, so it owned `1a1c118` (run e17, 2026-10-31,
+  release builds, next to elite-rematch, ssbu-quiet-elite-switch,
+  ssbu-gnw-judge-log, ssbu-desync-detector, Online Deluxe and
+  ssbu-fx-control): probe `result=installed role=owner`, gsp-visualizer
+  `role=guest … label=on result=installed`, and the label showed from the
+  probe's hook. The probe's `register` now answers from a `HOOKED` flag
+  after its own hook is on the site; before, it re-read the bytes and would
+  have turned this guest away.

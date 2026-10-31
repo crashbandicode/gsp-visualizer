@@ -12,7 +12,7 @@ mod share;
 use core::fmt::Write as _;
 use skyline::hooks::{getRegionAddress, InlineCtx, Region};
 use skyline::nn;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 const SITE: usize = 0x1a1c118;
 /// The first 16 bytes of `.1a1c118` (gsp-visualizer's full guard is 64).
@@ -34,8 +34,13 @@ pub extern "C" fn ssbu_inline_site_1a1c118_v1() -> *const share::SiteShareV1 {
     &SITE_SHARE
 }
 
+/// Set once this plugin's hook is on the site (its bytes no longer match).
+static HOOKED: AtomicBool = AtomicBool::new(false);
+
+/// Before this `main` hooks, the bytes say whether it will; after, they hold
+/// this plugin's own hook, so the answer is `HOOKED`.
 unsafe extern "C" fn register(callback: usize) -> bool {
-    guard_matches() && SHARED.push(callback)
+    (HOOKED.load(Ordering::Acquire) || guard_matches()) && SHARED.push(callback)
 }
 
 unsafe extern "C" fn probe_callback(_ctx: *mut InlineCtx) {
@@ -135,6 +140,7 @@ pub fn main() {
                 return;
             }
             skyline::install_hooks!(site);
+            HOOKED.store(true, Ordering::Release);
             append(format_args!(
                 "probe result=installed role=owner guests={}",
                 SHARED.len()
