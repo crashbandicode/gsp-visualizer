@@ -63,8 +63,13 @@ Eden, 2026-10-30, one console on LAN Online with a rating runtime, English:
 both builds install and label every hovered fighter, and the logged inputs
 match the game. 0.3.0 also with stand-ins for a plugin that hooks the same
 instruction without sharing: the label still shows and the stand-ins still
-run. Not tested: Nintendo's live server, other languages, a real Switch.
-Details: [docs/CSS-LABEL.md](docs/CSS-LABEL.md).
+run. Details: [docs/CSS-LABEL.md](docs/CSS-LABEL.md).
+
+Switch, 2026-11-02, 13.0.5 on Nintendo's servers (Quickplay), next to 15
+other plugins: 0.3.0 (`879ef69b…`, built from `a0dac0f`) logged
+`role=owner apply=stock/near guests=0 label=on result=installed
+heap_allocations=0` on each of four boots, and the label worked as intended
+in the operator's play session. Not tested: other languages.
 
 ## Research
 
