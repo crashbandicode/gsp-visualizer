@@ -44,9 +44,9 @@ setting 1000, σ = setting 1002 (÷1000), K from the current rules (setting
   rating matchmaking allows was not traced.
 - **Opponent deviation:** the settled deviation, the smallest B after 64
   alternating matches from the default record (setting 1000, setting
-  1001). With the captured settings it is 60, which every played fighter
-  reaches. A lower opponent deviation moves the rating more, which keeps
-  the win count a lower bound.
+  1001). With the captured settings it is 60 (`glicko::settled_deviation`,
+  the model's mirror series). A lower opponent deviation moves the rating
+  more, which keeps the win count a lower bound.
 - Matches that end before the result upload count as losses: every player
   uploads the loss record at match start (`16aa770`).
 - The count is capped at 999 (shown as "999+").
@@ -67,9 +67,9 @@ setting 1000, σ = setting 1002 (÷1000), K from the current rules (setting
 | 1800/60 | 18 losses | 16 losses |
 | 2000/60 | 40 losses | 36 losses |
 
-A settled fighter gains or loses about 9 to 10 rating points per match
-against an equal opponent at K 0.9, so the counts grow with the distance to
-the threshold. These are the plugin's numbers: `src/glicko.rs` is checked
+A settled fighter (deviation 60) gains or loses 9 rating points per match
+against an equal opponent at K 0.9 in the model, so the counts grow with the
+distance to the threshold. These are the plugin's numbers: `src/glicko.rs` is checked
 against the Python model on 304 generated vectors.
 
 ## Limits

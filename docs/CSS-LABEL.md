@@ -1,7 +1,8 @@
 # The character select label
 
 2026-10-30. Static analysis of the 13.0.5 `main` (memory addresses; file
-offset = address + 0x100), checked in Eden the same day (below).
+offset = address + 0x100), checked in Eden on 2026-10-30 and 2026-10-31 UTC
+(below).
 
 ## How the game shows a fighter's GSP there
 
@@ -50,8 +51,9 @@ apart from other plugins' Skyline hooks (a one-word `b`, or a far jump).
   (this hook goes on a small stub that then jumps on to that plugin's
   handler), and another plugin's one-word branch is relocated into this
   hook (kept only if this hook is a one-word branch too; otherwise the bytes
-  are put back). The install line says `apply=<stock|chain|branch>/<near|far>`.
-  Anything else there: `apply=foreign/skipped`, nothing installed.
+  are put back: `apply=branch/restored`, nothing installed). The install line
+  says `apply=<stock|chain|branch>/<near|far>`. Anything else there:
+  `apply=foreign/skipped`, nothing installed.
 - The hover call `1a19c44` must keep its own `bl` (a hook on it would move
   the return address the hook checks into that plugin's trampoline); hooks
   after it are fine.
@@ -85,7 +87,8 @@ load order, since Skyline loads every plugin before any `main` runs):
 
 - `gsp_visualizer_hooked_sites_v1(out: *mut usize, capacity: usize) -> usize`:
   the main-image offsets this plugin has hooked (`0x1a1c118`; none when it
-  did not install), so a plugin can leave them alone.
+  did not hook the site itself, as a guest or when nothing was installed), so
+  a plugin can leave them alone.
 - `gsp_visualizer_label_v1(fighter: u64, out: *mut u16, capacity: usize) -> usize`:
   the label for a fighter's Hash40 (`Elite <GSP> · <n> wins|losses`,
   UTF-16, NUL-terminated; 0 when unavailable), to show it elsewhere without
@@ -107,17 +110,25 @@ load order, since Skyline loads every plugin before any `main` runs):
 `cargo skyline build --release --features diag` (Eden only) logs each
 label's inputs to `sd:/ultimate/gsp-visualizer/events.log` and reads
 `sd:/ultimate/gsp-visualizer/diag.txt` every 2 s: `joiner=newline|space`,
-`dot=middle|dash`, `threshold=<rating>|native`.
+`dot=middle|dash`, `threshold=<rating>|native`; `foreign=inline|far` is read
+once at boot (see the stand-in runs below).
 
 `tools/`: `gen_vectors.py` (the Rust test vectors, from the float32 model
 in `docs/gsp-formula/tools/gsp_update.py`) and `guard.py` (hook-site guard
 bytes). The models and the readers used on the flat `main` image are in
 [gsp-formula/tools/](gsp-formula/tools/).
 
-## Eden check (2026-10-30)
+## Eden checks (2026-10-30 and 2026-10-31 UTC)
 
-One Eden instance on LAN Online with the Eden agent's rating runtime, a
-fresh profile (every fighter unplayed), English, Quickplay → Solo.
+One Eden instance on LAN Online with the Eden agent's rating runtime,
+English, Quickplay → Solo, on a copy of one profile (every fighter unplayed
+until the e06/e07 match). Builds by NRO sha256: 0.1.0 diag `e2e1141d…` and
+release `80af4f63…`; 0.2.0 diag `be873b5e…` (e11) and `da1b829c…` (e12);
+0.3.0 diag `d660002a…` and release `879ef69b…`. The values below are the
+diagnostic builds' `diag armed` / `diag composed` lines and each run's install
+line.
+
+The first five items are run e02 (0.1.0 diag):
 
 - The panel is the character select's right-hand box: "GSP" (part 0, the
   hovered fighter), "No.1 GSP" (part 1) and "Roster GSP" (part 2), as the
@@ -132,23 +143,27 @@ fresh profile (every fighter unplayed), English, Quickplay → Solo.
   `Elite 4,565,189 · 3 losses`.
 - Preferred Rules Time 3:00 changed the rule fields to 0/180, K to 1.0 and
   the label to `4 wins`.
-- The release build (no diagnostics) showed the same label; install line
+- The release build (no diagnostics, runs e03 and e04) showed the same
+  label; install line
   `result=installed hooks=arm,disarm,set_text heap_allocations=0`.
-- A real Elite fighter: on a same-PC pair, a Quickplay match (Sephiroth
-  against Pyra/Mythra, canceled 24 s in) left Sephiroth's record (slot 82,
-  1500/130) in Eden's rating server; relaunched with the seed `82:1700`,
-  the game itself showed Quickplay (Elite Smash) with only Sephiroth lit,
-  and the label read `15,653,112⏎Elite 14,749,911 · 2 losses`. Unplayed
-  fighters then default to 1600 (13,398,614, `2 wins`), as the game's
-  default for unplayed fighters (halfway to the best fighter) predicts.
+- A real Elite fighter: on a same-PC pair (e06/e07), a Quickplay match
+  (Sephiroth against Pyra/Mythra, canceled) left a record for Sephiroth
+  (slot 82) in Eden's rating server; relaunched with the seed `82:1700`
+  (e08, 0.1.0 release), the game itself showed Quickplay (Elite Smash) with
+  only Sephiroth lit, and the label read
+  `15,653,112⏎Elite 14,749,911 · 2 losses`. Unplayed fighters then showed
+  13,398,614 and `2 wins`: the 0.2.0 diagnostic build (e11) logged their
+  record as 1595/130, the game's default for unplayed fighters (halfway to
+  the best fighter, 1600, capped at setting 1003 = 1595; see
+  [gsp-formula/GSP-FORMULA.md](gsp-formula/GSP-FORMULA.md)).
 - 0.2.0 with the elite-rematch plugin and `test-plugins/share-probe` (which
   wants the same instruction) loaded together: gsp-visualizer logged
-  `result=installed role=owner hooks=apply`, the probe
-  `result=registered role=guest … ok=true`; while hovering, the probe's
-  callback ran 8 times from gsp-visualizer's one hook and the label read
-  `Elite 14,749,911 · 2 losses` (Sephiroth) and `· 2 wins`. A first run
-  showed the probe refusing (`guard_mismatch`) because it guarded the site
-  before the election; both plugins now elect first.
+  `result=installed role=owner hooks=apply` (e11, e12). In e11 the probe
+  refused (`guard_mismatch`) because it guarded the site before the
+  election; both plugins now elect first. In e12 the probe logged
+  `result=registered role=guest … ok=true`; while hovering, its callback ran
+  8 times from gsp-visualizer's one hook, and the label read
+  `Elite 14,749,911 · 2 losses` (Sephiroth) and `· 2 wins`.
 - 0.3.0 (diag) with `foreign=inline` (before its own hook the plugin hooks
   `1a1c118` and `37a2288`, inside the text setter, as a plugin that does not
   share would), ssbu-quiet-elite-switch 0.2.0 (diag, the same),
@@ -159,7 +174,7 @@ fresh profile (every fighter unplayed), English, Quickplay → Solo.
   `1a1c118` ran 10 times and the one in the setter 2,218 times, and the
   probe's callback still ran from this plugin's hook.
 - The same with `foreign=far` (a far jump on `1a1c118` to a stand-in handler,
-  run e16): `apply=chain/far … result=installed`; the label showed, the
+  run e16, 2026-10-31): `apply=chain/far … result=installed`; the label showed, the
   stand-ins ran (far 10, setter 2,206) and the probe's callback ran.
 - The share probe loaded first, so it owned `1a1c118` (run e17, 2026-10-31,
   release builds, next to elite-rematch, ssbu-quiet-elite-switch,

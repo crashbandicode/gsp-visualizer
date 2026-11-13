@@ -13,8 +13,9 @@ GSP is two separate things:
 
 1. **A per-fighter rating**, updated by the console after each online match
    with one step of **Glicko-2** (Glickman's algorithm, scale 173.7178), times
-   a ruleset multiplier, and uploaded to the server. The server stores what it
-   is sent (DataStore 0x73/82).
+   a ruleset multiplier, and uploaded to the server (DataStore 0x73/82).
+   Eden's server stores what it is sent; whether Nintendo's does cannot be
+   seen from the client (see Limits).
 2. **The displayed GSP**, computed on the console from that rating with a
    normal-curve formula whose parameters (and a 50-point table for the tails)
    come from the server.
@@ -126,7 +127,8 @@ from those values:
 Code: `17d1480(owner, kind, rating)` with kind 21. The result screen calls it
 at `1d5add0` (old C, +0x70) and `1d5ae10` (new C, +0x74). The character
 select screen value for C = 1641 matches the same formula; its call site was
-not traced. Inputs: C, settings 1300..1304, and the
+not traced here ([../CSS-LABEL.md](../CSS-LABEL.md) traces it to `17994c0`,
+kind 21). Inputs: C, settings 1300..1304, and the
 server's kind-21 table, cached in the save (`system_data.bin`): count, total
 T, then up to 50 (rank, rating) pairs.
 

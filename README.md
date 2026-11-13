@@ -10,36 +10,31 @@ Elite Smash takes, and how many wins in a row get you there.
 
 ![Hovering fighters on the Quickplay character select](docs/media/hover.gif)
 
-*Eden, 2026-10-30: unplayed fighters (rating 1500), Preferred Rules Time
-3:00, the server's threshold 1642 (GSP 14,749,911).*
+*Eden, 2026-10-30, run e04, 0.1.0 release build (`80af4f63…`): unplayed
+fighters (rating 1500), Preferred Rules Time 3:00, the server's threshold 1642
+(GSP 14,749,911).*
 
 A fighter already in Elite Smash shows the losses in a row that would take
 it out instead:
 
 ![The label for a fighter in Elite Smash](docs/media/in-elite.gif)
 
-*Eden, 2026-10-30: Sephiroth at rating 1700 (a real Quickplay match created
-its record, then Eden's rating server was seeded). The game itself switches
-to Elite Smash: gold header, only Sephiroth lit. Pyra/Mythra, not in Elite,
-shows wins.*
+*Eden, 2026-10-30, run e08, 0.1.0 release build (`80af4f63…`): Sephiroth at
+rating 1700 (a real Quickplay match created its record, then Eden's rating
+server was seeded). The game itself switches to Elite Smash: gold header, only
+Sephiroth lit. Pyra/Mythra, not in Elite, shows wins.*
 
-- **Threshold:** read live on every hover from the server's Elite Smash
-  setting (1201) and shown as GSP by the game's own converter, so it follows
-  the server as the threshold and the player count rise. Nothing is
-  hard-coded; Eden replays one captured server reply, hence the fixed 1642
-  in the GIFs.
-- **Estimate:** the game's own rating update (Glicko-2 × the ruleset's K),
-  run on the fighter's record against opponents at your rating. K follows
-  your Preferred Rules (2:00 time: 0.9, 3:00: 1.0).
-- UI only: no rating, network or match state changes.
-- **No clashes:** one hook, inside the character select's own GSP code; it
-  calls the game's text setter instead of hooking it. If another plugin
-  wants the same instruction, the two share one hook through
-  `ssbu_inline_site_1a1c118_v1` (found with `nn::ro::LookupSymbol`, any load
-  order) and both keep working. A plugin that hooks it without sharing is
-  chained onto instead, and hooks in the game functions the label calls are
-  called through. Other plugins can also show the label themselves through
-  `gsp_visualizer_label_v1`
+- **Threshold:** read from the server's Elite Smash setting on every hover
+  and turned into GSP by the game's own converter, so it follows the server
+  as the threshold and the player count change. Nothing is hard-coded. Eden
+  replays one recorded server reply, hence the fixed 1642 in the GIFs.
+- **Estimate:** the game's own rating update, run on the fighter's record
+  against opponents at your rating. It follows your Preferred Rules time
+  limit: with the recorded server settings a 2:00 match moves the rating 0.9
+  times as far as a 3:00 one.
+- **Only the text changes:** no rating, network or match state.
+- **Works next to other plugins:** if another plugin hooks the same place,
+  both keep working, and other plugins can show the label themselves
   ([details](docs/CSS-LABEL.md#what-the-plugin-does)).
 - **Small:** 124 KiB of game memory once loaded (code and data), no heap
   use.
@@ -59,17 +54,18 @@ cargo skyline build --release
 
 ## Tested
 
-Eden, 2026-10-30, one console on LAN Online with a rating runtime, English:
-both builds install and label every hovered fighter, and the logged inputs
-match the game. 0.3.0 also with stand-ins for a plugin that hooks the same
-instruction without sharing: the label still shows and the stand-ins still
-run. Details: [docs/CSS-LABEL.md](docs/CSS-LABEL.md).
+Eden, 2026-10-30 and 2026-10-31 (UTC), one console on LAN Online with a
+rating runtime, English: 0.1.0, 0.2.0 and 0.3.0 installed and labelled every
+hovered fighter, and the values the diagnostic builds logged matched the
+game's. 0.3.0 also ran with stand-ins for a plugin that hooks the same place
+without sharing: the label still showed and the stand-ins still ran.
+Details: [docs/CSS-LABEL.md](docs/CSS-LABEL.md).
 
 Switch, 2026-11-02, 13.0.5 on Nintendo's servers (Quickplay), next to 15
 other plugins: 0.3.0 (`879ef69b…`, built from `a0dac0f`) logged
 `role=owner apply=stock/near guests=0 label=on result=installed
-heap_allocations=0` on each of four boots, and the label worked as intended
-in the operator's play session. Not tested: other languages.
+heap_allocations=0` on each of four boots, and the operator reported the
+label working in that play session. Not tested: other languages.
 
 ## Research
 
