@@ -41,6 +41,8 @@ Sephiroth lit. Pyra/Mythra, not in Elite, shows wins.*
 
 ## Install
 
+Tested on: Super Smash Bros. Ultimate 13.0.5 · Switch firmware 23.5.0 · Atmosphère 1.12.2
+
 Copy `libgsp_visualizer.nro` to
 `sd:/atmosphere/contents/01006A800016E000/romfs/skyline/plugins/`. On any
 version other than 13.0.5 it installs nothing.
